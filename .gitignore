@@ -18,7 +18,7 @@ coverage.xml
 htmlcov/
 
 ## hypothesis test artifacts
-./hypothesis/
+.hypothesis/
 
 # coding stuff
 Claude.md

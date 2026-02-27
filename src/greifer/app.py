@@ -30,6 +30,60 @@ ENABLE_VISUALIZATION: bool = True
 
 
 
+def _stream_loop(
+    device: pyspacemouse.SpaceMouseDevice,
+    client: pyigtl.OpenIGTLinkClient,
+    vis_queue: multiprocessing.Queue | None,
+    dt: float,
+) -> None:
+    """Hot path: read SpaceMouse, compute transform, send to Slicer."""
+    T_cumulative = np.eye(4)
+
+    while True:
+        state = device.read()
+
+        if vis_queue is not None:
+            try:
+                vis_queue.put_nowait((
+                    state.t,
+                    state.x, state.y, state.z,
+                    state.roll, state.pitch,
+                    state.yaw,
+                ))
+            except queue_module.Full:
+                pass
+
+        dx = state.x * TRANS_SCALE
+        dy = state.y * TRANS_SCALE
+        dz = state.z * TRANS_SCALE
+
+        rx = state.roll * ROT_SCALE
+        ry = state.pitch * ROT_SCALE
+        rz = state.yaw * ROT_SCALE
+
+        total_motion = (
+            abs(dx) + abs(dy) + abs(dz)
+            + abs(rx) + abs(ry) + abs(rz)
+        )
+
+        if total_motion < 1e-6:
+            time.sleep(dt)
+            continue
+
+        dT = np.eye(4)
+        dT[:3, 3] = [dx, dy, dz]
+        dT[:3, :3] = build_rotation_matrix(rx, ry, rz)
+
+        T_cumulative = dT @ T_cumulative
+
+        transform_msg = pyigtl.TransformMessage(
+            T_cumulative, device_name=DEVICE_NAME
+        )
+        client.send_message(transform_msg)
+
+        time.sleep(dt)
+
+
 def main() -> None:
     console = Console()
 
@@ -66,7 +120,7 @@ def main() -> None:
     vis_process: multiprocessing.Process | None = None
 
     if ENABLE_VISUALIZATION:
-        
+
         from greifer.visualization import run_visualization
         vis_queue = multiprocessing.Queue(maxsize=600)
         vis_process = multiprocessing.Process(
@@ -74,8 +128,7 @@ def main() -> None:
         )
         vis_process.start()
 
-    # ── Open SpaceMouse ──────────────────────────────────────────
-    T_cumulative = np.eye(4)
+    # ── Open SpaceMouse & stream ──────────────────────────────────
     dt = 1.0 / UPDATE_HZ
 
     with pyspacemouse.open() as device:
@@ -83,49 +136,7 @@ def main() -> None:
 
         try:
             with console.status("Streaming to 3D Slicer …"):
-                while True:
-                    state = device.read()
-
-                    if vis_queue is not None:
-                        try:
-                            vis_queue.put_nowait((
-                                state.t,
-                                state.x, state.y, state.z,
-                                state.roll, state.pitch,
-                                state.yaw,
-                            ))
-                        except queue_module.Full:
-                            pass
-
-                    dx = state.x * TRANS_SCALE
-                    dy = state.y * TRANS_SCALE
-                    dz = state.z * TRANS_SCALE
-
-                    rx = state.roll * ROT_SCALE
-                    ry = state.pitch * ROT_SCALE
-                    rz = state.yaw * ROT_SCALE
-
-                    total_motion = (
-                        abs(dx) + abs(dy) + abs(dz)
-                        + abs(rx) + abs(ry) + abs(rz)
-                    )
-
-                    if total_motion < 1e-6:
-                        time.sleep(dt)
-                        continue
-
-                    dT = np.eye(4)
-                    dT[:3, 3] = [dx, dy, dz]
-                    dT[:3, :3] = build_rotation_matrix(rx, ry, rz)
-
-                    T_cumulative = dT @ T_cumulative
-
-                    transform_msg = pyigtl.TransformMessage(
-                        T_cumulative, device_name=DEVICE_NAME
-                    )
-                    client.send_message(transform_msg)
-
-                    time.sleep(dt)
+                _stream_loop(device, client, vis_queue, dt)
 
         except KeyboardInterrupt:
             pass

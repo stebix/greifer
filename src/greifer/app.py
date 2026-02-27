@@ -43,6 +43,7 @@ def _stream_loop(
     """Hot path: read SpaceMouse, compute transform, send to Slicer."""
     T_cumulative = np.eye(4)
     iteration = 0
+    next_tick = time.monotonic()
 
     while True:
         state = device.read()
@@ -71,27 +72,29 @@ def _stream_loop(
             + abs(rx) + abs(ry) + abs(rz)
         )
 
-        if total_motion < 1e-6:
-            time.sleep(dt)
-            continue
+        if total_motion >= 1e-6:
+            dT = np.eye(4)
+            dT[:3, 3] = [dx, dy, dz]
+            dT[:3, :3] = build_rotation_matrix(rx, ry, rz)
 
-        dT = np.eye(4)
-        dT[:3, 3] = [dx, dy, dz]
-        dT[:3, :3] = build_rotation_matrix(rx, ry, rz)
+            T_cumulative = dT @ T_cumulative
+            iteration += 1
 
-        T_cumulative = dT @ T_cumulative
-        iteration += 1
+            if iteration % REORTHOGONALIZE_INTERVAL == 0:
+                U, _, Vt = np.linalg.svd(T_cumulative[:3, :3])
+                T_cumulative[:3, :3] = U @ Vt
 
-        if iteration % REORTHOGONALIZE_INTERVAL == 0:
-            U, _, Vt = np.linalg.svd(T_cumulative[:3, :3])
-            T_cumulative[:3, :3] = U @ Vt
+            transform_msg = pyigtl.TransformMessage(
+                T_cumulative, device_name=DEVICE_NAME
+            )
+            client.send_message(transform_msg)
 
-        transform_msg = pyigtl.TransformMessage(
-            T_cumulative, device_name=DEVICE_NAME
-        )
-        client.send_message(transform_msg)
-
-        time.sleep(dt)
+        next_tick += dt
+        sleep_remaining = next_tick - time.monotonic()
+        if sleep_remaining > 0:
+            time.sleep(sleep_remaining)
+        else:
+            next_tick = time.monotonic()
 
 
 def main() -> None:

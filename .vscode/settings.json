@@ -1,6 +1,8 @@
 {
     "cSpell.words": [
+        "backpressure",
         "linalg",
+        "orthogonalization",
         "pyigtl",
         "REORTHOGONALIZE"
     ]

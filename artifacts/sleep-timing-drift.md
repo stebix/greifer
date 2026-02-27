@@ -9,7 +9,7 @@ completed. It does not account for the time the loop body itself consumed.
 
 Each iteration's actual period is:
 
-```
+```python
 T_actual = T_work + T_sleep
 ```
 

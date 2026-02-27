@@ -1,6 +1,6 @@
 # `greifer`
 
-![greifer logo](https://raw.githubusercontent.com/stebix/greifer/trunk/greifer-v1-cropped.png)
+![greifer logo](assets/greifer-v1-cropped.png)
 
 **Synopsis**: A compatibility layer to connect 3Dconnexion SpaceMouse devices to 3D Slicer via OpenIGTLink.
 

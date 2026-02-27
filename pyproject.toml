@@ -1,0 +1,20 @@
+[project]
+name = "greifer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "stebix", email = "jannik.stebani@uni-wuerzburg.de" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "pyigtl>=0.3.1",
+    "pyspacemouse>=2.0.0",
+]
+
+[project.scripts]
+greifer = "greifer:main"
+
+[build-system]
+requires = ["uv_build>=0.10.6,<0.11.0"]
+build-backend = "uv_build"

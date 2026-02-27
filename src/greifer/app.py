@@ -65,7 +65,7 @@ def _stream_loop(
         rz = state.yaw * ROT_SCALE
 
         total_motion = (
-            abs(dx) + abs(dy) + abs(dz)
+              abs(dx) + abs(dy) + abs(dz)
             + abs(rx) + abs(ry) + abs(rz)
         )
 

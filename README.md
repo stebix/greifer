@@ -17,8 +17,10 @@ uv pip install -e .
 ## Usage
 
 Inside 3DSlicer, we first require the additional modules:
-- OpenIGTLinkIF -> https://github.com/openigtlink/SlicerOpenIGTLink
-- SlicerIGT -> https://github.com/SlicerIGT/SlicerIGT
+
+- OpenIGTLinkIF -> <https://github.com/openigtlink/SlicerOpenIGTLink>
+- SlicerIGT -> <https://github.com/SlicerIGT/SlicerIGT>
+
 The tools can also be installed from the Slicer Extension Manager.
 
 Then, we need to create a new "Linear Transform" node in Slicer and name it "SpaceMouseTransform" (or change the `DEVICE_NAME` variable in `greifer/__init__.py` to match your chosen name). This node will receive the transformations from the SpaceMouse.

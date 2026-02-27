@@ -33,7 +33,6 @@ def main() -> None:
     time.sleep(1)  # Give connection time to establish
     print('Connected.\n')
 
-    POLLING_RATE: float = 50 # in Hz
 
     # basic transformation
     T_cumulative = np.eye(4)

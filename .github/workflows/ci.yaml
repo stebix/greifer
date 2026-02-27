@@ -1,0 +1,12 @@
+name: CI pipeline
+
+on:
+  push
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: astral-sh/ruff-action@v3
+      

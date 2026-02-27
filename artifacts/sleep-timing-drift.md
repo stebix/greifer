@@ -23,7 +23,7 @@ where `T_work` includes:
 At a target of 500 Hz the budget per iteration is **2 ms**. Even if `T_work`
 averages only 0.3–0.5 ms, the effective rate drops to:
 
-```
+```python
 1 / (0.002 + 0.0004) ≈ 416 Hz  →  ~17 % undershoot
 ```
 

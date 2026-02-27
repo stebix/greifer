@@ -1,6 +1,8 @@
-# greifer
+# `greifer`
 
-Synopsis: A compatibility layer to connect 3Dconnexion SpaceMouse devices to 3D Slicer via OpenIGTLink.
+![greifer logo](https://raw.githubusercontent.com/stebix/greifer/trunk/greifer-v1-cropped.png)
+
+**Synopsis**: A compatibility layer to connect 3Dconnexion SpaceMouse devices to 3D Slicer via OpenIGTLink.
 
 Problem Statement: 3Dconnexion's SpaceMouse devices are human interface devices (HID) that provide 6-DOF input  widely used in 3D applications. However, they lack native support for 3D Slicer, an open-source platform for medical image computing. This project aims to bridge that gap by creating a Python-based compatibility layer that translates SpaceMouse inputs into OpenIGTLink messages that Slicer can understand.
 

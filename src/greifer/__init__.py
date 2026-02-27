@@ -1,4 +1,7 @@
+import multiprocessing
+import queue as queue_module
 import time
+
 import numpy as np
 
 import pyspacemouse
@@ -16,7 +19,9 @@ DEVICE_NAME: str = "SpaceMouseTransform"  # Must match your Slicer transform nod
 TRANS_SCALE: float = 0.005    # mm per unit of SpaceMouse translation
 ROT_SCALE: float = 0.001    # radians per unit of SpaceMouse rotation
 
-UPDATE_HZ: int = 60     # How often to push updates
+UPDATE_HZ: int = 500     # How often to push updates
+
+ENABLE_VISUALIZATION: bool = True
 # ───────────────────────────────────────────────────────────────
 
 
@@ -29,12 +34,21 @@ def main() -> None:
         pyspacemouse.get_connected_devices(),
     )
 
-
     print(f'Connecting to Slicer at {SLICER_HOST}:{SLICER_PORT} ...')
     client = pyigtl.OpenIGTLinkClient(host=SLICER_HOST, port=SLICER_PORT)
     time.sleep(1)  # Give connection time to establish
     print('Connected.\n')
 
+    # Spawn visualization process
+    vis_queue = None
+    vis_process = None
+    if ENABLE_VISUALIZATION:
+        from greifer.visualization import run_visualization
+        vis_queue = multiprocessing.Queue(maxsize=600)
+        vis_process = multiprocessing.Process(
+            target=run_visualization, args=(vis_queue,), daemon=True
+        )
+        vis_process.start()
 
     # basic transformation
     T_cumulative = np.eye(4)
@@ -42,36 +56,70 @@ def main() -> None:
 
     with pyspacemouse.open() as device:
         print('Device opened successfully!')
-        while True:
-            state = device.read()
+        try:
+            while True:
+                state = device.read()
 
-            dx = state.x * TRANS_SCALE
-            dy = state.y * TRANS_SCALE
-            dz = state.z * TRANS_SCALE
+                # Enqueue raw values BEFORE dead-zone check
+                if vis_queue is not None:
+                    try:
+                        vis_queue.put_nowait((
+                            state.t,
+                            state.x, state.y, state.z,
+                            state.roll, state.pitch, state.yaw,
+                        ))
+                    except queue_module.Full:
+                        pass
 
-            rx = state.roll * ROT_SCALE
-            ry = state.pitch * ROT_SCALE
-            rz = state.yaw * ROT_SCALE
+                dx = state.x * TRANS_SCALE
+                dy = state.y * TRANS_SCALE
+                dz = state.z * TRANS_SCALE
 
-            total_motion = abs(dx) + abs(dy) + abs(dz) + abs(rx) + abs(ry) + abs(rz)
+                rx = state.roll * ROT_SCALE
+                ry = state.pitch * ROT_SCALE
+                rz = state.yaw * ROT_SCALE
 
-            if total_motion < 1e-6:
+                total_motion = (
+                    abs(dx) + abs(dy) + abs(dz)
+                    + abs(rx) + abs(ry) + abs(rz)
+                )
+
+                if total_motion < 1e-6:
+                    time.sleep(dt)
+                    continue
+
+                dT = np.eye(4)
+
+                translation = [dx, dy, dz]
+                dT[:3, 3] = translation
+                dR = build_rotation_matrix(rx, ry, rz)
+                dT[:3, :3] = dR
+
+                T_cumulative = dT @ T_cumulative
+
+                transform_msg = pyigtl.TransformMessage(
+                    T_cumulative, device_name=DEVICE_NAME
+                )
+                client.send_message(transform_msg)
+
                 time.sleep(dt)
-                continue
 
-            dT = np.eye(4)
-
-            translation = [dx, dy, dz]
-            dT[:3, 3] = translation
-            dR = build_rotation_matrix(rx, ry, rz)
-            dT[:3, :3] = dR
-
-            T_cumulative = dT @ T_cumulative
-
-            transform_msg = pyigtl.TransformMessage(T_cumulative, device_name=DEVICE_NAME)
-            client.send_message(transform_msg)
-           
-            time.sleep(dt)
+        except KeyboardInterrupt:
+            print('\nShutting down...')
+        
+        finally:
+            client.stop()
+            if vis_queue is not None:
+                vis_queue.cancel_join_thread()
+                try:
+                    vis_queue.put_nowait(None)
+                except (BrokenPipeError, OSError, queue_module.Full):
+                    pass
+                vis_queue.close()
+            if vis_process is not None:
+                vis_process.join(timeout=3)
+                if vis_process.is_alive():
+                    vis_process.terminate()
 
 
 

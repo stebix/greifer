@@ -9,6 +9,17 @@ wheels/
 # Virtual environments
 .venv
 
+# linting and ruff
+.ruff_cache/
+
+# testing
+.pytest_cache/
+coverage.xml
+htmlcov/
+
+## hypothesis test artifacts
+./hypothesis/
+
 # coding stuff
 Claude.md
 .claude/

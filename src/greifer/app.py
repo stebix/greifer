@@ -26,6 +26,7 @@ TRANS_SCALE: float = 0.005    # mm per unit of SpaceMouse translation
 ROT_SCALE: float = 0.001    # radians per unit of SpaceMouse rotation
 
 UPDATE_HZ: int = 500     # How often to push updates
+REORTHOGONALIZE_INTERVAL: int = 1000  # Re-orthogonalize rotation matrix every N iterations
 
 ENABLE_VISUALIZATION: bool = True
 # ───────────────────────────────────────────────────────────────
@@ -41,6 +42,7 @@ def _stream_loop(
 ) -> None:
     """Hot path: read SpaceMouse, compute transform, send to Slicer."""
     T_cumulative = np.eye(4)
+    iteration = 0
 
     while True:
         state = device.read()
@@ -78,6 +80,11 @@ def _stream_loop(
         dT[:3, :3] = build_rotation_matrix(rx, ry, rz)
 
         T_cumulative = dT @ T_cumulative
+        iteration += 1
+
+        if iteration % REORTHOGONALIZE_INTERVAL == 0:
+            U, _, Vt = np.linalg.svd(T_cumulative[:3, :3])
+            T_cumulative[:3, :3] = U @ Vt
 
         transform_msg = pyigtl.TransformMessage(
             T_cumulative, device_name=DEVICE_NAME

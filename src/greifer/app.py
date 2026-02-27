@@ -2,10 +2,13 @@ import multiprocessing
 import queue as queue_module
 import time
 
+from multiprocessing.queues import Queue
+
 import numpy as np
 
 import pyspacemouse
 import pyigtl
+
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -33,7 +36,7 @@ ENABLE_VISUALIZATION: bool = True
 def _stream_loop(
     device: pyspacemouse.SpaceMouseDevice,
     client: pyigtl.OpenIGTLinkClient,
-    vis_queue: multiprocessing.Queue | None,
+    vis_queue: Queue | None,
     dt: float,
 ) -> None:
     """Hot path: read SpaceMouse, compute transform, send to Slicer."""
@@ -116,7 +119,7 @@ def main() -> None:
     console.print("✓ Connected to 3D Slicer", style="green")
 
     # ── Spawn visualization process ──────────────────────────────
-    vis_queue: multiprocessing.Queue | None = None
+    vis_queue: Queue | None = None
     vis_process: multiprocessing.Process | None = None
 
     if ENABLE_VISUALIZATION:

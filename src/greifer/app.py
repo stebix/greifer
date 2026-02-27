@@ -4,8 +4,6 @@ import time
 
 from multiprocessing.queues import Queue
 
-import numpy as np
-
 import pyspacemouse
 import pyigtl
 
@@ -13,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
-from greifer.math import build_rotation_matrix
+from greifer.transform import TransformAccumulator, compute_increments
 
 
 # ── Configuration ──────────────────────────────────────────────
@@ -41,8 +39,9 @@ def _stream_loop(
     dt: float,
 ) -> None:
     """Hot path: read SpaceMouse, compute transform, send to Slicer."""
-    T_cumulative = np.eye(4)
-    iteration = 0
+    accumulator = TransformAccumulator(
+        reorthogonalize_interval=REORTHOGONALIZE_INTERVAL
+    )
     next_tick = time.monotonic()
 
     while True:
@@ -59,33 +58,18 @@ def _stream_loop(
             except queue_module.Full:
                 pass
 
-        dx = state.x * TRANS_SCALE
-        dy = state.y * TRANS_SCALE
-        dz = state.z * TRANS_SCALE
-
-        rx = state.roll * ROT_SCALE
-        ry = state.pitch * ROT_SCALE
-        rz = state.yaw * ROT_SCALE
-
-        total_motion = (
-              abs(dx) + abs(dy) + abs(dz)
-            + abs(rx) + abs(ry) + abs(rz)
+        increments = compute_increments(
+            state.x, state.y, state.z,
+            state.roll, state.pitch, state.yaw,
+            trans_scale=TRANS_SCALE,
+            rot_scale=ROT_SCALE,
         )
 
-        if total_motion >= 1e-6:
-            dT = np.eye(4)
-            dT[:3, 3] = [dx, dy, dz]
-            dT[:3, :3] = build_rotation_matrix(rx, ry, rz)
-
-            T_cumulative = dT @ T_cumulative
-            iteration += 1
-
-            if iteration % REORTHOGONALIZE_INTERVAL == 0:
-                U, _, Vt = np.linalg.svd(T_cumulative[:3, :3])
-                T_cumulative[:3, :3] = U @ Vt
+        if increments is not None:
+            matrix = accumulator.update(*increments)
 
             transform_msg = pyigtl.TransformMessage(
-                T_cumulative, device_name=DEVICE_NAME
+                matrix, device_name=DEVICE_NAME
             )
             client.send_message(transform_msg)
 

@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "jaxtyping>=0.3.9",
     "pyigtl>=0.3.1",
     "pyspacemouse>=2.0.0",
 ]

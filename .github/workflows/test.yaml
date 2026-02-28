@@ -13,10 +13,18 @@ jobs:
       - run: uv sync --group dev
       - run: uv run pytest --tb=short --cov=greifer --cov-report=term-missing --cov-report=json
 
-      - name: Extract coverage percentage
+      - name: Extract coverage and compute badge color
         run: |
           COVERAGE=$(python3 -c "import json; print(json.load(open('coverage.json'))['totals']['percent_covered_display'])")
           echo "COVERAGE=$COVERAGE" >> "$GITHUB_ENV"
+          # Map coverage to a shields.io named color
+          if [ "$COVERAGE" -ge 90 ]; then COLOR=brightgreen
+          elif [ "$COVERAGE" -ge 75 ]; then COLOR=green
+          elif [ "$COVERAGE" -ge 60 ]; then COLOR=yellowgreen
+          elif [ "$COVERAGE" -ge 40 ]; then COLOR=yellow
+          elif [ "$COVERAGE" -ge 20 ]; then COLOR=orange
+          else COLOR=red; fi
+          echo "COLOR=$COLOR" >> "$GITHUB_ENV"
 
       - name: Update coverage badge
         if: github.ref == 'refs/heads/trunk'
@@ -27,6 +35,4 @@ jobs:
           filename: greifer-coverage.json
           label: coverage
           message: ${{ env.COVERAGE }}%
-          valColorRange: ${{ env.COVERAGE }}
-          minColorRange: 0
-          maxColorRange: 100
+          color: ${{ env.COLOR }}

@@ -14,8 +14,10 @@ wheels/
 
 # testing
 .pytest_cache/
+.coverage
 coverage.xml
 htmlcov/
+.coverage.*
 
 ## hypothesis test artifacts
 .hypothesis/

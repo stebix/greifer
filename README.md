@@ -2,7 +2,7 @@
 
 ![Lint](https://github.com/stebix/greifer/actions/workflows/lint.yaml/badge.svg?branch=trunk)
 ![Test](https://github.com/stebix/greifer/actions/workflows/test.yaml/badge.svg?branch=trunk)
-![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/stebix/cf07829d54862fd3bbb920ba4f7d4a5c/raw/greifer-coverage.json)
+![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Fstebix%2Fcf07829d54862fd3bbb920ba4f7d4a5c%2Fraw%2Fgreifer-coverage.json)
 
 ![greifer logo](assets/greifer-v1-cropped.png)
 

@@ -13,6 +13,7 @@ from rich.panel import Panel
 
 from greifer.transform import (
     DofLockFilter,
+    Sensitivity,
     TransformAccumulator,
     compute_increments,
 )
@@ -24,8 +25,7 @@ SLICER_PORT: int = 18944
 DEVICE_NAME: str = "SpaceMouseTransform"  # Must match your Slicer transform node name
 
 # Sensitivity tuning — adjust these to taste
-TRANS_SCALE: float = 0.005    # mm per unit of SpaceMouse translation
-ROT_SCALE: float = 0.001    # radians per unit of SpaceMouse rotation
+SENSITIVITY: Sensitivity = Sensitivity.uniform(trans=0.005, rot=0.001)
 
 UPDATE_HZ: int = 500     # How often to push updates
 REORTHOGONALIZE_INTERVAL: int = 1000  # Re-orthogonalize rotation matrix every N iterations
@@ -47,6 +47,7 @@ def _stream_loop(
     vis_stride: int = 1,
     dof_filter: DofLockFilter | None = None,
     cmd_queue: Queue | None = None,
+    sensitivity: Sensitivity = SENSITIVITY,
 ) -> None:
     """Hot path: read SpaceMouse, compute transform, send to Slicer."""
     accumulator = TransformAccumulator(
@@ -83,8 +84,7 @@ def _stream_loop(
         increments = compute_increments(
             state.x, state.y, state.z,
             state.roll, state.pitch, state.yaw,
-            trans_scale=TRANS_SCALE,
-            rot_scale=ROT_SCALE,
+            sensitivity=sensitivity,
         )
 
         if increments is not None:
@@ -115,7 +115,7 @@ def main() -> None:
     table.add_row("Update rate", f"{UPDATE_HZ} Hz")
     table.add_row(
         "Sensitivity",
-        f"trans {TRANS_SCALE} · rot {ROT_SCALE}",
+        f"trans {SENSITIVITY.x} · rot {SENSITIVITY.roll}",
     )
     table.add_row(
         "Visualization",

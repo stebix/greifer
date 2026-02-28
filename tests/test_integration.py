@@ -78,14 +78,14 @@ class TestTransformSending:
 
     def test_single_x_translation_matrix(self):
         """A single x-axis device input produces the expected translation."""
-        from greifer.app import TRANS_SCALE
+        from greifer.app import SENSITIVITY
         device = FakeDevice([FakeState(x=100.0)])
         client = FakeClient()
 
         _run_loop(device, client)
 
         matrix = client.messages[0].matrix
-        expected_dx = 100.0 * TRANS_SCALE
+        expected_dx = 100.0 * SENSITIVITY.x
         assert_allclose(matrix[0, 3], expected_dx, atol=1e-10)
         assert_allclose(matrix[1, 3], 0.0, atol=1e-10)
         assert_allclose(matrix[2, 3], 0.0, atol=1e-10)
@@ -98,7 +98,7 @@ class TestAccumulationAcrossFrames:
 
     def test_translations_accumulate(self):
         """Two consecutive x-translations should sum."""
-        from greifer.app import TRANS_SCALE
+        from greifer.app import SENSITIVITY
         states = [
             FakeState(x=100.0, t=0.0),
             FakeState(x=100.0, t=0.1),
@@ -110,7 +110,7 @@ class TestAccumulationAcrossFrames:
 
         # Second message should have accumulated translation
         final_matrix = client.messages[-1].matrix
-        expected_dx = 2 * 100.0 * TRANS_SCALE
+        expected_dx = 2 * 100.0 * SENSITIVITY.x
         assert_allclose(final_matrix[0, 3], expected_dx, atol=1e-10)
 
     def test_rotation_submatrix_stays_orthonormal(self):

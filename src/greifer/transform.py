@@ -1,5 +1,8 @@
 """Pure transform computation extracted from the streaming loop."""
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 from enum import StrEnum
 
 import numpy as np
@@ -11,6 +14,27 @@ from greifer.math import build_rotation_matrix
 MOTION_THRESHOLD: float = 1e-6
 
 
+@dataclass(frozen=True, slots=True)
+class Sensitivity:
+    """Per-axis scale factors for the 6 degrees of freedom."""
+
+    x: float
+    y: float
+    z: float
+    roll: float
+    pitch: float
+    yaw: float
+
+    @classmethod
+    def uniform(cls, trans: float, rot: float) -> Sensitivity:
+        """All translation axes share *trans*; all rotation axes share *rot*."""
+        return cls(x=trans, y=trans, z=trans, roll=rot, pitch=rot, yaw=rot)
+
+    def for_axis(self, axis: Axis) -> float:
+        """Look up the scale factor for a given Axis enum member."""
+        return getattr(self, axis.value)
+
+
 def compute_increments(
     x: float,
     y: float,
@@ -18,21 +42,20 @@ def compute_increments(
     roll: float,
     pitch: float,
     yaw: float,
-    trans_scale: float,
-    rot_scale: float,
+    sensitivity: Sensitivity,
 ) -> tuple[float, float, float, float, float, float] | None:
     """Scale raw device state and apply motion threshold.
 
     Returns the scaled (dx, dy, dz, rx, ry, rz) tuple, or None if the
     total motion falls below the threshold.
     """
-    dx = x * trans_scale
-    dy = y * trans_scale
-    dz = z * trans_scale
+    dx = x * sensitivity.x
+    dy = y * sensitivity.y
+    dz = z * sensitivity.z
 
-    rx = roll * rot_scale
-    ry = pitch * rot_scale
-    rz = yaw * rot_scale
+    rx = roll * sensitivity.roll
+    ry = pitch * sensitivity.pitch
+    rz = yaw * sensitivity.yaw
 
     total_motion = (
         abs(dx) + abs(dy) + abs(dz)

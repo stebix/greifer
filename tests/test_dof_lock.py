@@ -10,7 +10,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from greifer.transform import Axis, DofLockFilter
-from greifer.app import _stream_loop, TRANS_SCALE
+from greifer.app import _stream_loop, SENSITIVITY
 from conftest import FakeDevice, FakeState, FakeClient, StopStreaming
 
 
@@ -240,7 +240,7 @@ class TestDofLockIntegration:
         _run_loop(device, client, dof_filter=None)
 
         matrix = client.messages[0].matrix
-        expected_dx = 100.0 * TRANS_SCALE
+        expected_dx = 100.0 * SENSITIVITY.x
         assert_allclose(matrix[0, 3], expected_dx, atol=1e-10)
 
     def test_all_axes_locked_produces_identity(self):
@@ -270,7 +270,7 @@ class TestDofLockIntegration:
         _run_loop(device, client, dof_filter=f)
 
         matrix = client.messages[0].matrix
-        expected_dx = 100.0 * TRANS_SCALE
+        expected_dx = 100.0 * SENSITIVITY.x
         assert_allclose(matrix[0, 3], expected_dx, atol=1e-10)
         assert_allclose(matrix[1, 3], 0.0, atol=1e-10)
 
@@ -318,7 +318,7 @@ class TestCommandQueueIntegration:
         _run_loop(device, client, dof_filter=None, cmd_queue=None)
 
         matrix = client.messages[0].matrix
-        expected_dx = 100.0 * TRANS_SCALE
+        expected_dx = 100.0 * SENSITIVITY.x
         assert_allclose(matrix[0, 3], expected_dx, atol=1e-10)
 
     def test_empty_cmd_queue_no_effect(self):
@@ -333,7 +333,7 @@ class TestCommandQueueIntegration:
         _run_loop(device, client, dof_filter=f, cmd_queue=cmd_queue)
 
         matrix = client.messages[0].matrix
-        expected_dx = 100.0 * TRANS_SCALE
+        expected_dx = 100.0 * SENSITIVITY.x
         assert_allclose(matrix[0, 3], expected_dx, atol=1e-10)
 
     def test_toggle_without_dof_filter_does_not_crash(self):

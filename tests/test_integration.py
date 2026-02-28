@@ -193,6 +193,90 @@ class TestVisualizationQueue:
         assert len(client.messages) == 1
 
 
+# ── Visualization decimation ─────────────────────────────────────────
+
+
+class TestVisualizationDecimation:
+
+    def test_stride_2_enqueues_half(self):
+        """With stride=2, only every second sample is enqueued."""
+        states = [FakeState(x=float(i), t=float(i)) for i in range(10)]
+        device = FakeDevice(states)
+        client = FakeClient()
+        vis_queue = queue_module.Queue(maxsize=100)
+
+        with pytest.raises(StopStreaming):
+            _stream_loop(device, client, vis_queue, dt=DT, vis_stride=2)
+
+        samples = []
+        while not vis_queue.empty():
+            samples.append(vis_queue.get_nowait())
+
+        assert len(samples) == 5
+
+    def test_stride_8_enqueues_one_eighth(self):
+        """With stride=8, only every 8th sample is enqueued."""
+        states = [FakeState(x=float(i), t=float(i)) for i in range(24)]
+        device = FakeDevice(states)
+        client = FakeClient()
+        vis_queue = queue_module.Queue(maxsize=100)
+
+        with pytest.raises(StopStreaming):
+            _stream_loop(device, client, vis_queue, dt=DT, vis_stride=8)
+
+        samples = []
+        while not vis_queue.empty():
+            samples.append(vis_queue.get_nowait())
+
+        assert len(samples) == 3
+
+    def test_stride_1_enqueues_all(self):
+        """With stride=1 (default), all samples are enqueued."""
+        states = [FakeState(x=float(i), t=float(i)) for i in range(7)]
+        device = FakeDevice(states)
+        client = FakeClient()
+        vis_queue = queue_module.Queue(maxsize=100)
+
+        with pytest.raises(StopStreaming):
+            _stream_loop(device, client, vis_queue, dt=DT, vis_stride=1)
+
+        samples = []
+        while not vis_queue.empty():
+            samples.append(vis_queue.get_nowait())
+
+        assert len(samples) == 7
+
+    def test_stride_does_not_affect_transform_sending(self):
+        """Decimation only affects vis queue; all transforms are still sent."""
+        states = [FakeState(x=100.0, t=float(i)) for i in range(16)]
+        device = FakeDevice(states)
+        client = FakeClient()
+        vis_queue = queue_module.Queue(maxsize=100)
+
+        with pytest.raises(StopStreaming):
+            _stream_loop(device, client, vis_queue, dt=DT, vis_stride=8)
+
+        # All 16 transforms sent
+        assert len(client.messages) == 16
+
+        # Only 2 vis samples (16 // 8)
+        samples = []
+        while not vis_queue.empty():
+            samples.append(vis_queue.get_nowait())
+        assert len(samples) == 2
+
+    def test_no_queue_with_stride_does_nothing(self):
+        """vis_queue=None with stride>1 works without error."""
+        states = [FakeState(x=100.0, t=float(i)) for i in range(8)]
+        device = FakeDevice(states)
+        client = FakeClient()
+
+        with pytest.raises(StopStreaming):
+            _stream_loop(device, client, vis_queue=None, dt=DT, vis_stride=8)
+
+        assert len(client.messages) == 8
+
+
 # ── Round-trip identity ──────────────────────────────────────────────
 
 

@@ -27,6 +27,9 @@ UPDATE_HZ: int = 500     # How often to push updates
 REORTHOGONALIZE_INTERVAL: int = 1000  # Re-orthogonalize rotation matrix every N iterations
 
 ENABLE_VISUALIZATION: bool = True
+
+VIS_HZ: int = 60                           # Visualization target rate
+VIS_STRIDE: int = UPDATE_HZ // VIS_HZ      # Enqueue every Nth sample (=8)
 # ───────────────────────────────────────────────────────────────
 
 
@@ -37,26 +40,31 @@ def _stream_loop(
     client: pyigtl.OpenIGTLinkClient,
     vis_queue: Queue | None,
     dt: float,
+    vis_stride: int = 1,
 ) -> None:
     """Hot path: read SpaceMouse, compute transform, send to Slicer."""
     accumulator = TransformAccumulator(
         reorthogonalize_interval=REORTHOGONALIZE_INTERVAL
     )
     next_tick = time.monotonic()
+    vis_counter = 0
 
     while True:
         state = device.read()
 
         if vis_queue is not None:
-            try:
-                vis_queue.put_nowait((
-                    state.t,
-                    state.x, state.y, state.z,
-                    state.roll, state.pitch,
-                    state.yaw,
-                ))
-            except queue_module.Full:
-                pass
+            vis_counter += 1
+            if vis_counter >= vis_stride:
+                vis_counter = 0
+                try:
+                    vis_queue.put_nowait((
+                        state.t,
+                        state.x, state.y, state.z,
+                        state.roll, state.pitch,
+                        state.yaw,
+                    ))
+                except queue_module.Full:
+                    pass
 
         increments = compute_increments(
             state.x, state.y, state.z,
@@ -95,7 +103,7 @@ def main() -> None:
     )
     table.add_row(
         "Visualization",
-        "enabled" if ENABLE_VISUALIZATION else "disabled",
+        f"enabled (1:{VIS_STRIDE} decimation)" if ENABLE_VISUALIZATION else "disabled",
     )
     table.add_row()
     table.add_row("SpaceMouse", DEVICE_NAME)
@@ -133,7 +141,7 @@ def main() -> None:
 
         try:
             with console.status("Streaming to 3D Slicer …"):
-                _stream_loop(device, client, vis_queue, dt)
+                _stream_loop(device, client, vis_queue, dt, vis_stride=VIS_STRIDE)
 
         except KeyboardInterrupt:
             pass

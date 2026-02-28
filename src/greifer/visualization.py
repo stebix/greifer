@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer
 
 
-MAXLEN = 600  # 10 seconds at 60 Hz
+MAXLEN = 600  # ~10 s of visible history (producer decimates to ~VIS_HZ)
 RENDER_HZ = 60
 WINDOW_SECONDS = 10.0
 

@@ -1,4 +1,4 @@
-"""Unit tests for the visualization queue drain logic.
+"""Unit tests for the visualization queue drain logic and DOF lock panel.
 
 The _Visualizer.__init__ requires a QApplication and pyqtgraph widgets,
 but _drain_queue only touches _queue, _t_offset, and _bufs. We bypass
@@ -10,7 +10,8 @@ from collections import deque
 
 import pytest
 
-from greifer.visualization import _Visualizer, MAXLEN
+from greifer.transform import Axis
+from greifer.visualization import _Visualizer, DofLockPanel, MAXLEN
 
 
 def _make_drain_target(q: queue_module.Queue) -> _Visualizer:
@@ -198,3 +199,34 @@ class TestBufferCapacity:
         assert len(viz._bufs[1]) == MAXLEN
         # Oldest values should have been evicted
         assert viz._bufs[1][-1] == pytest.approx(float(MAXLEN + 99))
+
+
+# ── DofLockPanel ─────────────────────────────────────────────────────
+
+
+class TestDofLockPanel:
+
+    def test_has_six_checkable_buttons(self, qapp):
+        q = queue_module.Queue()
+        panel = DofLockPanel(q)
+        assert len(panel.buttons) == 6
+        for btn in panel.buttons.values():
+            assert btn.isCheckable()
+
+    def test_clicking_button_enqueues_toggle_command(self, qapp):
+        q = queue_module.Queue()
+        panel = DofLockPanel(q)
+
+        panel.buttons[Axis.X].toggle()
+
+        cmd = q.get_nowait()
+        assert cmd == ("toggle", Axis.X)
+
+    def test_each_button_maps_to_correct_axis(self, qapp):
+        q = queue_module.Queue()
+        panel = DofLockPanel(q)
+
+        for axis, btn in panel.buttons.items():
+            btn.toggle()
+            cmd = q.get_nowait()
+            assert cmd == ("toggle", axis)

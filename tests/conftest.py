@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 class StopStreaming(Exception):
@@ -62,3 +67,12 @@ class FakeClient:
 
     def send_message(self, msg: object) -> None:
         self.messages.append(msg)
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    """Session-scoped QApplication for widget tests (offscreen)."""
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    return app

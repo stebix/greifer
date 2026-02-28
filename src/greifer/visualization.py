@@ -10,8 +10,17 @@ from typing import NamedTuple
 import numpy as np
 import pyqtgraph as pg
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 from PyQt6.QtCore import QTimer
+
+from greifer.transform import Axis
 
 
 MAXLEN = 600  # ~10 s of visible history (producer decimates to ~VIS_HZ)
@@ -113,16 +122,106 @@ class _Visualizer:
         self._first_plot.setXRange(t_min, t_max, padding=0)
 
 
-def run_visualization(queue: multiprocessing.Queue) -> None:
+# Maps Channel names to Axis members for the lock panel buttons.
+_CHANNEL_AXIS: tuple[tuple[str, str, Axis], ...] = (
+    ("Translation", "X", Axis.X),
+    ("Translation", "Y", Axis.Y),
+    ("Translation", "Z", Axis.Z),
+    ("Rotation", "Roll", Axis.ROLL),
+    ("Rotation", "Pitch", Axis.PITCH),
+    ("Rotation", "Yaw", Axis.YAW),
+)
+
+
+class DofLockPanel(QWidget):
+    """Side panel with toggle buttons for locking individual DOF axes."""
+
+    def __init__(
+        self,
+        cmd_queue: multiprocessing.Queue,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._cmd_queue = cmd_queue
+        self.setFixedWidth(130)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        header = QLabel("DOF Locks")
+        header.setStyleSheet("font-weight: bold; font-size: 13px;")
+        layout.addWidget(header)
+
+        self.buttons: dict[Axis, QPushButton] = {}
+        current_group: str | None = None
+
+        for group, name, axis in _CHANNEL_AXIS:
+            if group != current_group:
+                if current_group is not None:
+                    layout.addSpacing(12)
+                group_label = QLabel(group)
+                group_label.setStyleSheet("font-size: 11px; color: #aaa;")
+                layout.addWidget(group_label)
+                current_group = group
+
+            color = next(ch.color for ch in CHANNELS if ch.name == name)
+            btn = QPushButton(name)
+            btn.setCheckable(True)
+            btn.setStyleSheet(self._button_style(color))
+            btn.toggled.connect(lambda _checked, a=axis: self._on_toggle(a))
+            layout.addWidget(btn)
+            self.buttons[axis] = btn
+
+        layout.addStretch()
+
+    def _on_toggle(self, axis: Axis) -> None:
+        try:
+            self._cmd_queue.put_nowait(("toggle", axis))
+        except (queue_module.Full, BrokenPipeError, OSError):
+            pass
+
+    @staticmethod
+    def _button_style(color: str) -> str:
+        return (
+            f"QPushButton {{"
+            f"  border: 2px solid {color};"
+            f"  border-radius: 4px;"
+            f"  padding: 4px;"
+            f"  background: #2b2b2b;"
+            f"  color: {color};"
+            f"}}"
+            f"QPushButton:checked {{"
+            f"  background: {color};"
+            f"  color: #1a1a1a;"
+            f"}}"
+        )
+
+
+def run_visualization(
+    data_queue: multiprocessing.Queue,
+    cmd_queue: multiprocessing.Queue,
+) -> None:
     """Process entry point for the 6-DOF visualization window."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     app = QApplication([])
 
-    win = pg.GraphicsLayoutWidget(title="SpaceMouse 6-DOF")
-    win.resize(1200, 700)
-    win.show()
+    main_window = QWidget()
+    main_window.setWindowTitle("SpaceMouse 6-DOF")
+    main_window.resize(1350, 700)
 
-    viz = _Visualizer(queue, app, win)
+    h_layout = QHBoxLayout(main_window)
+    h_layout.setContentsMargins(0, 0, 0, 0)
+    h_layout.setSpacing(0)
+
+    graph_widget = pg.GraphicsLayoutWidget()
+    h_layout.addWidget(graph_widget, stretch=1)
+
+    panel = DofLockPanel(cmd_queue)
+    h_layout.addWidget(panel, stretch=0)
+
+    main_window.show()
+
+    viz = _Visualizer(data_queue, app, graph_widget)
 
     timer = QTimer()
     timer.timeout.connect(viz.update)

@@ -21,11 +21,12 @@ TRANSLATION_AXES = [Axis.X, Axis.Y, Axis.Z]
 ROTATION_AXES = [Axis.ROLL, Axis.PITCH, Axis.YAW]
 
 
-def _run_loop(device, client, vis_queue=None, dof_filter=None):
+def _run_loop(device, client, vis_queue=None, dof_filter=None, cmd_queue=None):
     """Run _stream_loop until the FakeDevice is exhausted."""
     with pytest.raises(StopStreaming):
         _stream_loop(
-            device, client, vis_queue, dt=DT, dof_filter=dof_filter,
+            device, client, vis_queue, dt=DT,
+            dof_filter=dof_filter, cmd_queue=cmd_queue,
         )
 
 
@@ -286,3 +287,65 @@ class TestDofLockIntegration:
         sample = vis_queue.get_nowait()
         # Raw x=100.0 appears in vis queue even though X is locked
         assert sample == (1.0, 100.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+# ── Command queue integration tests ─────────────────────────────
+
+
+class TestCommandQueueIntegration:
+
+    def test_toggle_command_locks_axis(self):
+        """A pre-loaded toggle command should lock the axis in output."""
+        f = DofLockFilter()
+        cmd_queue = queue_module.Queue()
+        cmd_queue.put_nowait(("toggle", Axis.X))
+
+        states = [FakeState(x=100.0, t=0.0)]
+        device = FakeDevice(states)
+        client = FakeClient()
+
+        _run_loop(device, client, dof_filter=f, cmd_queue=cmd_queue)
+
+        matrix = client.messages[0].matrix
+        assert_allclose(matrix[0, 3], 0.0, atol=1e-10)
+
+    def test_cmd_queue_none_is_backward_compatible(self):
+        """cmd_queue=None should not change behaviour."""
+        states = [FakeState(x=100.0, t=0.0)]
+        device = FakeDevice(states)
+        client = FakeClient()
+
+        _run_loop(device, client, dof_filter=None, cmd_queue=None)
+
+        matrix = client.messages[0].matrix
+        expected_dx = 100.0 * TRANS_SCALE
+        assert_allclose(matrix[0, 3], expected_dx, atol=1e-10)
+
+    def test_empty_cmd_queue_no_effect(self):
+        """An empty command queue should not affect output."""
+        f = DofLockFilter()
+        cmd_queue = queue_module.Queue()
+
+        states = [FakeState(x=100.0, t=0.0)]
+        device = FakeDevice(states)
+        client = FakeClient()
+
+        _run_loop(device, client, dof_filter=f, cmd_queue=cmd_queue)
+
+        matrix = client.messages[0].matrix
+        expected_dx = 100.0 * TRANS_SCALE
+        assert_allclose(matrix[0, 3], expected_dx, atol=1e-10)
+
+    def test_toggle_without_dof_filter_does_not_crash(self):
+        """Toggle command with dof_filter=None should be silently ignored."""
+        cmd_queue = queue_module.Queue()
+        cmd_queue.put_nowait(("toggle", Axis.X))
+
+        states = [FakeState(x=100.0, t=0.0)]
+        device = FakeDevice(states)
+        client = FakeClient()
+
+        _run_loop(device, client, dof_filter=None, cmd_queue=cmd_queue)
+
+        # Should still produce a transform (no crash)
+        assert len(client.messages) == 1

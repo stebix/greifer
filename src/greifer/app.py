@@ -46,6 +46,7 @@ def _stream_loop(
     dt: float,
     vis_stride: int = 1,
     dof_filter: DofLockFilter | None = None,
+    cmd_queue: Queue | None = None,
 ) -> None:
     """Hot path: read SpaceMouse, compute transform, send to Slicer."""
     accumulator = TransformAccumulator(
@@ -55,6 +56,14 @@ def _stream_loop(
     vis_counter = 0
 
     while True:
+        if cmd_queue is not None:
+            try:
+                cmd = cmd_queue.get_nowait()
+                if cmd[0] == "toggle" and dof_filter is not None:
+                    dof_filter.toggle(cmd[1])
+            except queue_module.Empty:
+                pass
+
         state = device.read()
 
         if vis_queue is not None:
@@ -129,14 +138,16 @@ def main() -> None:
 
     # ── Spawn visualization process ──────────────────────────────
     vis_queue: Queue | None = None
+    cmd_queue: Queue | None = None
     vis_process: multiprocessing.Process | None = None
 
     if ENABLE_VISUALIZATION:
 
         from greifer.visualization import run_visualization
         vis_queue = multiprocessing.Queue(maxsize=600)
+        cmd_queue = multiprocessing.Queue(maxsize=64)
         vis_process = multiprocessing.Process(
-            target=run_visualization, args=(vis_queue,), daemon=True
+            target=run_visualization, args=(vis_queue, cmd_queue), daemon=True
         )
         vis_process.start()
 
@@ -153,6 +164,7 @@ def main() -> None:
                     device, client, vis_queue, dt,
                     vis_stride=VIS_STRIDE,
                     dof_filter=dof_filter,
+                    cmd_queue=cmd_queue,
                 )
 
         except KeyboardInterrupt:
@@ -167,6 +179,8 @@ def main() -> None:
                 except (BrokenPipeError, OSError, queue_module.Full):
                     pass
                 vis_queue.close()
+            if cmd_queue is not None:
+                cmd_queue.close()
             if vis_process is not None:
                 vis_process.join(timeout=3)
                 if vis_process.is_alive():

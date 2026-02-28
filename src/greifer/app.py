@@ -11,7 +11,11 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
-from greifer.transform import TransformAccumulator, compute_increments
+from greifer.transform import (
+    DofLockFilter,
+    TransformAccumulator,
+    compute_increments,
+)
 
 
 # ── Configuration ──────────────────────────────────────────────
@@ -41,6 +45,7 @@ def _stream_loop(
     vis_queue: Queue | None,
     dt: float,
     vis_stride: int = 1,
+    dof_filter: DofLockFilter | None = None,
 ) -> None:
     """Hot path: read SpaceMouse, compute transform, send to Slicer."""
     accumulator = TransformAccumulator(
@@ -74,6 +79,8 @@ def _stream_loop(
         )
 
         if increments is not None:
+            if dof_filter is not None:
+                increments = dof_filter.apply(*increments)
             matrix = accumulator.update(*increments)
 
             transform_msg = pyigtl.TransformMessage(
@@ -135,13 +142,18 @@ def main() -> None:
 
     # ── Open SpaceMouse & stream ──────────────────────────────────
     dt = 1.0 / UPDATE_HZ
+    dof_filter = DofLockFilter()
 
     with pyspacemouse.open() as device:
         console.print("✓ SpaceMouse opened", style="green")
 
         try:
             with console.status("Streaming to 3D Slicer …"):
-                _stream_loop(device, client, vis_queue, dt, vis_stride=VIS_STRIDE)
+                _stream_loop(
+                    device, client, vis_queue, dt,
+                    vis_stride=VIS_STRIDE,
+                    dof_filter=dof_filter,
+                )
 
         except KeyboardInterrupt:
             pass

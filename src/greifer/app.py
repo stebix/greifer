@@ -126,7 +126,9 @@ def main() -> None:
     table.add_row()
     table.add_row("SpaceMouse", DEVICE_NAME)
     table.add_row("3D Slicer", f"{SLICER_HOST}:{SLICER_PORT}")
-    console.print(Panel(table, title="greifer", expand=False))
+    from greifer import __version__
+
+    console.print(Panel(table, title=f"greifer v{__version__}", expand=False))
 
     # ── Connect to 3D Slicer ─────────────────────────────────────
     with console.status(

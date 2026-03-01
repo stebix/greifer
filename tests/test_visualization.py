@@ -10,8 +10,8 @@ from collections import deque
 
 import pytest
 
-from greifer.transform import Axis
-from greifer.visualization import _Visualizer, DofLockPanel, MAXLEN
+from greifer.transform import Axis, Sensitivity
+from greifer.visualization import _Visualizer, DofLockPanel, SensitivityPanel, MAXLEN
 
 
 def _make_drain_target(q: queue_module.Queue) -> _Visualizer:
@@ -230,3 +230,119 @@ class TestDofLockPanel:
             btn.toggle()
             cmd = q.get_nowait()
             assert cmd == ("toggle", axis)
+
+
+# ── SensitivityPanel ────────────────────────────────────────────
+
+
+class TestSensitivityPanel:
+
+    def _make_panel(self, q=None, initial=None):
+        if q is None:
+            q = queue_module.Queue()
+        if initial is None:
+            initial = Sensitivity.uniform(0.005, 0.001)
+        return SensitivityPanel(q, initial), q
+
+    def test_has_two_tabs(self, qapp):
+        panel, _ = self._make_panel()
+        assert panel._tabs.count() == 2
+        assert panel._tabs.tabText(0) == "Uniform"
+        assert panel._tabs.tabText(1) == "Per-Axis"
+
+    def test_initial_uniform_values(self, qapp):
+        panel, _ = self._make_panel()
+        assert panel._uniform_spins["trans"].value() == pytest.approx(0.005)
+        assert panel._uniform_spins["rot"].value() == pytest.approx(0.001)
+
+    def test_per_axis_tab_has_six_spinboxes(self, qapp):
+        panel, _ = self._make_panel()
+        assert len(panel._axis_spins) == 6
+        for axis in Axis:
+            assert axis in panel._axis_spins
+
+    def test_uniform_change_enqueues_command(self, qapp):
+        panel, q = self._make_panel()
+        panel._uniform_spins["trans"].setValue(0.02)
+
+        cmd = q.get_nowait()
+        assert cmd[0] == "sensitivity"
+        sens = cmd[1]
+        assert sens.x == pytest.approx(0.02)
+        assert sens.y == pytest.approx(0.02)
+        assert sens.z == pytest.approx(0.02)
+        assert sens.roll == pytest.approx(0.001)
+
+    def test_per_axis_change_enqueues_command(self, qapp):
+        panel, q = self._make_panel()
+        # Switch to Per-Axis tab
+        panel._tabs.setCurrentIndex(1)
+        # Drain the tab-switch command
+        while not q.empty():
+            q.get_nowait()
+
+        panel._axis_spins[Axis.X].setValue(0.03)
+
+        cmd = q.get_nowait()
+        assert cmd[0] == "sensitivity"
+        assert cmd[1].x == pytest.approx(0.03)
+
+    def test_slider_spinbox_sync(self, qapp):
+        panel, _ = self._make_panel()
+        slider = panel._uniform_sliders["trans"]
+        spin = panel._uniform_spins["trans"]
+        # Move slider to midpoint
+        slider.setValue(SensitivityPanel._SLIDER_STEPS // 2)
+        expected = SensitivityPanel._TRANS_MAX / 2.0
+        assert spin.value() == pytest.approx(expected)
+
+    def test_uniform_sets_all_three_axes(self, qapp):
+        panel, q = self._make_panel()
+        panel._uniform_spins["trans"].setValue(0.01)
+
+        cmd = q.get_nowait()
+        sens = cmd[1]
+        assert sens.x == pytest.approx(0.01)
+        assert sens.y == pytest.approx(0.01)
+        assert sens.z == pytest.approx(0.01)
+
+    def test_tab_switch_uniform_to_peraxis(self, qapp):
+        panel, q = self._make_panel()
+        # Set uniform trans to 0.02
+        panel._uniform_spins["trans"].setValue(0.02)
+        while not q.empty():
+            q.get_nowait()
+
+        # Switch to Per-Axis tab
+        panel._tabs.setCurrentIndex(1)
+
+        assert panel._axis_spins[Axis.X].value() == pytest.approx(0.02)
+        assert panel._axis_spins[Axis.Y].value() == pytest.approx(0.02)
+        assert panel._axis_spins[Axis.Z].value() == pytest.approx(0.02)
+
+    def test_tab_switch_peraxis_to_uniform_averages(self, qapp):
+        panel, q = self._make_panel()
+        # Switch to Per-Axis tab
+        panel._tabs.setCurrentIndex(1)
+        while not q.empty():
+            q.get_nowait()
+
+        # Set divergent per-axis values
+        panel._axis_spins[Axis.X].setValue(0.01)
+        panel._axis_spins[Axis.Y].setValue(0.02)
+        panel._axis_spins[Axis.Z].setValue(0.03)
+        while not q.empty():
+            q.get_nowait()
+
+        # Switch back to Uniform
+        panel._tabs.setCurrentIndex(0)
+
+        expected_avg = (0.01 + 0.02 + 0.03) / 3.0
+        assert panel._uniform_spins["trans"].value() == pytest.approx(expected_avg)
+
+    def test_full_queue_does_not_crash(self, qapp):
+        q = queue_module.Queue(maxsize=1)
+        q.put_nowait(("dummy",))  # fill queue
+        panel = SensitivityPanel(q, Sensitivity.uniform(0.005, 0.001))
+        # Should not raise
+        panel._uniform_spins["trans"].setValue(0.02)

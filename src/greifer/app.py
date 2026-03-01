@@ -62,6 +62,8 @@ def _stream_loop(
                 cmd = cmd_queue.get_nowait()
                 if cmd[0] == "toggle" and dof_filter is not None:
                     dof_filter.toggle(cmd[1])
+                elif cmd[0] == "sensitivity":
+                    sensitivity = cmd[1]
             except queue_module.Empty:
                 pass
 
@@ -147,7 +149,7 @@ def main() -> None:
         vis_queue = multiprocessing.Queue(maxsize=600)
         cmd_queue = multiprocessing.Queue(maxsize=64)
         vis_process = multiprocessing.Process(
-            target=run_visualization, args=(vis_queue, cmd_queue), daemon=True
+            target=run_visualization, args=(vis_queue, cmd_queue, SENSITIVITY), daemon=True
         )
         vis_process.start()
 

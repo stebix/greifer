@@ -9,7 +9,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from greifer.transform import Axis, DofLockFilter
+from greifer.transform import Axis, DofLockFilter, Sensitivity
 from greifer.app import _stream_loop, SENSITIVITY
 from conftest import FakeDevice, FakeState, FakeClient, StopStreaming
 
@@ -348,4 +348,56 @@ class TestCommandQueueIntegration:
         _run_loop(device, client, dof_filter=None, cmd_queue=cmd_queue)
 
         # Should still produce a transform (no crash)
+        assert len(client.messages) == 1
+
+
+# ── Sensitivity command integration tests ─────────────────────
+
+
+class TestSensitivityCommandIntegration:
+
+    def test_sensitivity_command_changes_scaling(self):
+        """A sensitivity command should change the scale factors used."""
+        new_sens = Sensitivity.uniform(0.01, 0.001)
+        cmd_queue = queue_module.Queue()
+        cmd_queue.put_nowait(("sensitivity", new_sens))
+
+        states = [FakeState(x=100.0, t=0.0)]
+        device = FakeDevice(states)
+        client = FakeClient()
+        f = DofLockFilter()
+
+        _run_loop(device, client, dof_filter=f, cmd_queue=cmd_queue)
+
+        matrix = client.messages[0].matrix
+        expected_dx = 100.0 * new_sens.x
+        assert_allclose(matrix[0, 3], expected_dx, atol=1e-10)
+
+    def test_sensitivity_command_without_dof_filter(self):
+        """Sensitivity command with dof_filter=None should not crash."""
+        new_sens = Sensitivity.uniform(0.01, 0.001)
+        cmd_queue = queue_module.Queue()
+        cmd_queue.put_nowait(("sensitivity", new_sens))
+
+        states = [FakeState(x=100.0, t=0.0)]
+        device = FakeDevice(states)
+        client = FakeClient()
+
+        _run_loop(device, client, dof_filter=None, cmd_queue=cmd_queue)
+
+        matrix = client.messages[0].matrix
+        expected_dx = 100.0 * new_sens.x
+        assert_allclose(matrix[0, 3], expected_dx, atol=1e-10)
+
+    def test_unknown_command_ignored(self):
+        """An unknown command type should be silently ignored."""
+        cmd_queue = queue_module.Queue()
+        cmd_queue.put_nowait(("unknown", 42))
+
+        states = [FakeState(x=100.0, t=0.0)]
+        device = FakeDevice(states)
+        client = FakeClient()
+
+        _run_loop(device, client, dof_filter=None, cmd_queue=cmd_queue)
+
         assert len(client.messages) == 1

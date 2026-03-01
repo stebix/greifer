@@ -12,15 +12,19 @@ import pyqtgraph as pg
 
 from PyQt6.QtWidgets import (
     QApplication,
+    QDoubleSpinBox,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSlider,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import Qt, QTimer
 
-from greifer.transform import Axis
+from greifer.transform import Axis, Sensitivity
 
 
 MAXLEN = 600  # ~10 s of visible history (producer decimates to ~VIS_HZ)
@@ -133,6 +137,9 @@ _CHANNEL_AXIS: tuple[tuple[str, str, Axis], ...] = (
 )
 
 
+_TRANS_AXES = frozenset({Axis.X, Axis.Y, Axis.Z})
+
+
 class DofLockPanel(QWidget):
     """Side panel with toggle buttons for locking individual DOF axes."""
 
@@ -143,7 +150,6 @@ class DofLockPanel(QWidget):
     ) -> None:
         super().__init__(parent)
         self._cmd_queue = cmd_queue
-        self.setFixedWidth(130)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -197,11 +203,229 @@ class DofLockPanel(QWidget):
         )
 
 
+class SensitivityPanel(QWidget):
+    """Side panel with sliders for tuning per-axis sensitivity."""
+
+    _SLIDER_STEPS = 1000
+    _TRANS_MIN = 0.0
+    _TRANS_MAX = 0.05
+    _ROT_MIN = 0.0
+    _ROT_MAX = 0.01
+
+    def __init__(
+        self,
+        cmd_queue: multiprocessing.Queue,
+        initial: Sensitivity,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._cmd_queue = cmd_queue
+        self._sensitivity = initial
+        self._updating = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        header = QLabel("Sensitivity")
+        header.setStyleSheet("font-weight: bold; font-size: 13px;")
+        layout.addWidget(header)
+
+        self._tabs = QTabWidget()
+        layout.addWidget(self._tabs)
+
+        # ── Uniform tab ──────────────────────────────────────────
+        uniform_widget = QWidget()
+        uniform_layout = QGridLayout(uniform_widget)
+        uniform_layout.setContentsMargins(4, 4, 4, 4)
+
+        self._uniform_sliders: dict[str, QSlider] = {}
+        self._uniform_spins: dict[str, QDoubleSpinBox] = {}
+
+        s, sp = self._make_row(
+            uniform_layout, 0, "Trans",
+            self._TRANS_MIN, self._TRANS_MAX, initial.x,
+        )
+        self._uniform_sliders["trans"] = s
+        self._uniform_spins["trans"] = sp
+
+        s, sp = self._make_row(
+            uniform_layout, 1, "Rot",
+            self._ROT_MIN, self._ROT_MAX, initial.roll,
+        )
+        self._uniform_sliders["rot"] = s
+        self._uniform_spins["rot"] = sp
+
+        self._tabs.addTab(uniform_widget, "Uniform")
+
+        # ── Per-Axis tab ─────────────────────────────────────────
+        per_axis_widget = QWidget()
+        per_axis_layout = QGridLayout(per_axis_widget)
+        per_axis_layout.setContentsMargins(4, 4, 4, 4)
+
+        self._axis_sliders: dict[Axis, QSlider] = {}
+        self._axis_spins: dict[Axis, QDoubleSpinBox] = {}
+
+        axis_info: tuple[tuple[Axis, str, str], ...] = (
+            (Axis.X, "X", "#1f77b4"),
+            (Axis.Y, "Y", "#2ca02c"),
+            (Axis.Z, "Z", "#17becf"),
+            (Axis.ROLL, "Roll", "#d62728"),
+            (Axis.PITCH, "Pitch", "#ff7f0e"),
+            (Axis.YAW, "Yaw", "#e377c2"),
+        )
+
+        for row, (axis, name, color) in enumerate(axis_info):
+            vmin = self._TRANS_MIN if axis in _TRANS_AXES else self._ROT_MIN
+            vmax = self._TRANS_MAX if axis in _TRANS_AXES else self._ROT_MAX
+            s, sp = self._make_row(
+                per_axis_layout, row, name,
+                vmin, vmax, initial.for_axis(axis),
+                color=color,
+            )
+            self._axis_sliders[axis] = s
+            self._axis_spins[axis] = sp
+
+        self._tabs.addTab(per_axis_widget, "Per-Axis")
+
+        self._tabs.currentChanged.connect(self._on_tab_changed)
+
+        layout.addStretch()
+
+    # ── Helpers ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _float_to_slider(value: float, vmin: float, vmax: float) -> int:
+        if vmax <= vmin:
+            return 0
+        return round((value - vmin) / (vmax - vmin) * SensitivityPanel._SLIDER_STEPS)
+
+    @staticmethod
+    def _slider_to_float(pos: int, vmin: float, vmax: float) -> float:
+        return vmin + pos / SensitivityPanel._SLIDER_STEPS * (vmax - vmin)
+
+    def _make_row(
+        self,
+        layout: QGridLayout,
+        row: int,
+        label: str,
+        vmin: float,
+        vmax: float,
+        initial: float,
+        color: str | None = None,
+    ) -> tuple[QSlider, QDoubleSpinBox]:
+        lbl = QLabel(label)
+        if color is not None:
+            lbl.setStyleSheet(f"color: {color}; font-weight: bold;")
+        layout.addWidget(lbl, row, 0)
+
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(0, self._SLIDER_STEPS)
+        slider.setValue(self._float_to_slider(initial, vmin, vmax))
+        layout.addWidget(slider, row, 1)
+
+        spin = QDoubleSpinBox()
+        spin.setDecimals(4)
+        spin.setRange(vmin, vmax)
+        spin.setSingleStep((vmax - vmin) / self._SLIDER_STEPS)
+        spin.setValue(initial)
+        layout.addWidget(spin, row, 2)
+
+        slider.valueChanged.connect(
+            lambda _val, s=slider, sp=spin, mn=vmin, mx=vmax: self._slider_moved(s, sp, mn, mx)
+        )
+        spin.valueChanged.connect(
+            lambda _val, s=slider, sp=spin, mn=vmin, mx=vmax: self._spin_changed(s, sp, mn, mx)
+        )
+
+        return slider, spin
+
+    def _slider_moved(
+        self, slider: QSlider, spin: QDoubleSpinBox, vmin: float, vmax: float,
+    ) -> None:
+        if self._updating:
+            return
+        self._updating = True
+        spin.setValue(self._slider_to_float(slider.value(), vmin, vmax))
+        self._updating = False
+        self._emit_sensitivity()
+
+    def _spin_changed(
+        self, slider: QSlider, spin: QDoubleSpinBox, vmin: float, vmax: float,
+    ) -> None:
+        if self._updating:
+            return
+        self._updating = True
+        slider.setValue(self._float_to_slider(spin.value(), vmin, vmax))
+        self._updating = False
+        self._emit_sensitivity()
+
+    def _emit_sensitivity(self) -> None:
+        if self._tabs.currentIndex() == 0:
+            # Uniform tab
+            trans = self._uniform_spins["trans"].value()
+            rot = self._uniform_spins["rot"].value()
+            sens = Sensitivity.uniform(trans, rot)
+        else:
+            # Per-Axis tab
+            sens = Sensitivity(
+                x=self._axis_spins[Axis.X].value(),
+                y=self._axis_spins[Axis.Y].value(),
+                z=self._axis_spins[Axis.Z].value(),
+                roll=self._axis_spins[Axis.ROLL].value(),
+                pitch=self._axis_spins[Axis.PITCH].value(),
+                yaw=self._axis_spins[Axis.YAW].value(),
+            )
+        self._sensitivity = sens
+        try:
+            self._cmd_queue.put_nowait(("sensitivity", sens))
+        except (queue_module.Full, BrokenPipeError, OSError):
+            pass
+
+    def _on_tab_changed(self, index: int) -> None:
+        self._updating = True
+        if index == 0:
+            # Switching to Uniform — average translation and rotation axes
+            trans_avg = (
+                self._sensitivity.x
+                + self._sensitivity.y
+                + self._sensitivity.z
+            ) / 3.0
+            rot_avg = (
+                self._sensitivity.roll
+                + self._sensitivity.pitch
+                + self._sensitivity.yaw
+            ) / 3.0
+            self._uniform_spins["trans"].setValue(trans_avg)
+            self._uniform_sliders["trans"].setValue(
+                self._float_to_slider(trans_avg, self._TRANS_MIN, self._TRANS_MAX)
+            )
+            self._uniform_spins["rot"].setValue(rot_avg)
+            self._uniform_sliders["rot"].setValue(
+                self._float_to_slider(rot_avg, self._ROT_MIN, self._ROT_MAX)
+            )
+        else:
+            # Switching to Per-Axis — populate from current sensitivity
+            for axis, spin in self._axis_spins.items():
+                val = self._sensitivity.for_axis(axis)
+                spin.setValue(val)
+                vmin = self._TRANS_MIN if axis in _TRANS_AXES else self._ROT_MIN
+                vmax = self._TRANS_MAX if axis in _TRANS_AXES else self._ROT_MAX
+                self._axis_sliders[axis].setValue(
+                    self._float_to_slider(val, vmin, vmax)
+                )
+        self._updating = False
+        self._emit_sensitivity()
+
+
 def run_visualization(
     data_queue: multiprocessing.Queue,
     cmd_queue: multiprocessing.Queue,
+    initial_sensitivity: Sensitivity | None = None,
 ) -> None:
     """Process entry point for the 6-DOF visualization window."""
+    if initial_sensitivity is None:
+        initial_sensitivity = Sensitivity.uniform(0.005, 0.001)
+
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     app = QApplication([])
 
@@ -216,8 +440,17 @@ def run_visualization(
     graph_widget = pg.GraphicsLayoutWidget()
     h_layout.addWidget(graph_widget, stretch=1)
 
-    panel = DofLockPanel(cmd_queue)
-    h_layout.addWidget(panel, stretch=0)
+    right_panel = QWidget()
+    right_panel.setFixedWidth(220)
+    right_layout = QVBoxLayout(right_panel)
+    right_layout.setContentsMargins(0, 0, 0, 0)
+    right_layout.setSpacing(0)
+
+    right_layout.addWidget(DofLockPanel(cmd_queue))
+    right_layout.addWidget(SensitivityPanel(cmd_queue, initial_sensitivity))
+    right_layout.addStretch()
+
+    h_layout.addWidget(right_panel, stretch=0)
 
     main_window.show()
 

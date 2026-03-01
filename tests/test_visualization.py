@@ -10,8 +10,10 @@ from collections import deque
 
 import pytest
 
+from unittest.mock import MagicMock
+
 from greifer.transform import Axis, Sensitivity
-from greifer.visualization import _Visualizer, DofLockPanel, SensitivityPanel, MAXLEN
+from greifer.visualization import _Visualizer, DofLockPanel, SensitivityPanel, CHANNELS, MAXLEN
 
 
 def _make_drain_target(q: queue_module.Queue) -> _Visualizer:
@@ -346,3 +348,56 @@ class TestSensitivityPanel:
         panel = SensitivityPanel(q, Sensitivity.uniform(0.005, 0.001))
         # Should not raise
         panel._uniform_spins["trans"].setValue(0.02)
+
+
+# ── Lock indicators ──────────────────────────────────────────────────
+
+
+def _make_lock_target() -> _Visualizer:
+    """Create a _Visualizer with only the fields needed for set_axis_locked."""
+    viz = object.__new__(_Visualizer)
+    viz._lock_labels = []
+    viz._curves = []
+    for _ in CHANNELS:
+        label = MagicMock()
+        label.isVisible.return_value = False
+        viz._lock_labels.append(label)
+        viz._curves.append(MagicMock())
+    return viz
+
+
+class TestLockIndicators:
+
+    def test_set_axis_locked_shows_label(self):
+        viz = _make_lock_target()
+        viz.set_axis_locked(0, True)
+
+        viz._lock_labels[0].show.assert_called_once()
+        pen_call = viz._curves[0].setPen.call_args
+        assert pen_call is not None
+        pen = pen_call[0][0]
+        from PyQt6.QtCore import Qt
+        assert pen.style() == Qt.PenStyle.DotLine
+
+    def test_set_axis_unlocked_hides_label(self):
+        viz = _make_lock_target()
+        viz.set_axis_locked(2, False)
+
+        viz._lock_labels[2].hide.assert_called_once()
+        pen_call = viz._curves[2].setPen.call_args
+        assert pen_call is not None
+        pen = pen_call[0][0]
+        from PyQt6.QtCore import Qt
+        assert pen.style() == Qt.PenStyle.SolidLine
+
+    def test_lock_then_unlock_roundtrip(self):
+        viz = _make_lock_target()
+        viz.set_axis_locked(4, True)
+        viz.set_axis_locked(4, False)
+
+        viz._lock_labels[4].show.assert_called_once()
+        viz._lock_labels[4].hide.assert_called_once()
+        # Last pen set should be solid
+        pen = viz._curves[4].setPen.call_args[0][0]
+        from PyQt6.QtCore import Qt
+        assert pen.style() == Qt.PenStyle.SolidLine

@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont
 
 from greifer.transform import Axis, Sensitivity
 
@@ -66,8 +67,12 @@ class _Visualizer:
         self._t_offset: float | None = None
         self._bufs: list[deque[float]] = [deque(maxlen=MAXLEN) for _ in range(7)]
         self._curves: list[pg.PlotDataItem] = []
+        self._plots: list[pg.PlotItem] = []
+        self._lock_labels: list[pg.TextItem] = []
 
         first_plot: pg.PlotItem | None = None
+        bold_font = QFont()
+        bold_font.setBold(True)
 
         for ch in CHANNELS:
             p = win.addPlot(row=ch.row, col=ch.col, title=ch.name)
@@ -83,6 +88,13 @@ class _Visualizer:
                 p.setXLink(first_plot)
 
             self._curves.append(p.plot(pen=pg.mkPen(ch.color, width=2)))
+            self._plots.append(p)
+
+            label = pg.TextItem("Locked", color="#ccc", anchor=(0, 0))
+            label.setFont(bold_font)
+            label.hide()
+            p.addItem(label, ignoreBounds=True)
+            self._lock_labels.append(label)
 
         assert first_plot is not None
         self._first_plot: pg.PlotItem = first_plot
@@ -124,6 +136,22 @@ class _Visualizer:
         t_max = t_arr[-1]
         t_min = t_max - WINDOW_SECONDS
         self._first_plot.setXRange(t_min, t_max, padding=0)
+
+        for label in self._lock_labels:
+            if label.isVisible():
+                label.setPos(t_min, 0.85)
+
+    def set_axis_locked(self, index: int, locked: bool) -> None:
+        """Toggle the visual lock indicator for *index*."""
+        ch = CHANNELS[index]
+        if locked:
+            self._lock_labels[index].show()
+            self._curves[index].setPen(
+                pg.mkPen(ch.color, width=2, style=Qt.PenStyle.DotLine)
+            )
+        else:
+            self._lock_labels[index].hide()
+            self._curves[index].setPen(pg.mkPen(ch.color, width=2))
 
 
 # Maps Channel names to Axis members for the lock panel buttons.
@@ -446,7 +474,8 @@ def run_visualization(
     right_layout.setContentsMargins(0, 0, 0, 0)
     right_layout.setSpacing(0)
 
-    right_layout.addWidget(DofLockPanel(cmd_queue))
+    lock_panel = DofLockPanel(cmd_queue)
+    right_layout.addWidget(lock_panel)
     right_layout.addWidget(SensitivityPanel(cmd_queue, initial_sensitivity))
     right_layout.addStretch()
 
@@ -455,6 +484,14 @@ def run_visualization(
     main_window.show()
 
     viz = _Visualizer(data_queue, app, graph_widget)
+
+    _AXIS_TO_INDEX: dict[Axis, int] = {
+        Axis.X: 0, Axis.Y: 1, Axis.Z: 2,
+        Axis.ROLL: 3, Axis.PITCH: 4, Axis.YAW: 5,
+    }
+    for axis, btn in lock_panel.buttons.items():
+        idx = _AXIS_TO_INDEX[axis]
+        btn.toggled.connect(lambda checked, i=idx: viz.set_axis_locked(i, checked))
 
     timer = QTimer()
     timer.timeout.connect(viz.update)

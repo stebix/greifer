@@ -65,6 +65,9 @@ class FakeClient:
     def __init__(self) -> None:
         self.messages: list = []
 
+    def is_connected(self) -> bool:
+        return True
+
     def send_message(self, msg: object) -> None:
         self.messages.append(msg)
 

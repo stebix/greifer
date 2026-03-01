@@ -5,6 +5,7 @@ transform computation, network sending, and visualization queuing — using
 fakes at the hardware/network boundaries.
 """
 
+import logging
 import queue as queue_module
 
 import numpy as np
@@ -325,3 +326,35 @@ class TestRoundTrip:
         final = client.messages[-1].matrix
         assert_allclose(final[:3, :3], np.eye(3), atol=1e-8)
         assert_allclose(final[:3, 3], [0, 0, 0], atol=1e-8)
+
+
+# ── IGTL link health check ─────────────────────────────────────────
+
+
+class FlippingClient(FakeClient):
+    """FakeClient whose is_connected() flips to False after *flip_after* calls."""
+
+    def __init__(self, flip_after: int = 3) -> None:
+        super().__init__()
+        self._flip_after = flip_after
+        self._call_count = 0
+
+    def is_connected(self) -> bool:
+        self._call_count += 1
+        return self._call_count <= self._flip_after
+
+
+class TestLinkHealthCheck:
+
+    def test_link_lost_warning(self, caplog):
+        """A connected→disconnected transition emits a warning."""
+        # With dt=0 the check interval is 500; use enough states to exceed it.
+        states = [FakeState(x=100.0, t=float(i)) for i in range(600)]
+        device = FakeDevice(states)
+        client = FlippingClient(flip_after=1)
+
+        with caplog.at_level(logging.WARNING, logger="greifer"):
+            with pytest.raises(StopStreaming):
+                _stream_loop(device, client, vis_queue=None, dt=DT)
+
+        assert any("IGTL link lost" in r.message for r in caplog.records)

@@ -1,3 +1,4 @@
+import logging
 import multiprocessing
 import queue as queue_module
 import time
@@ -8,6 +9,7 @@ import pyspacemouse
 import pyigtl
 
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.table import Table
 from rich.panel import Panel
 
@@ -27,6 +29,7 @@ DEVICE_NAME: str = "SpaceMouseTransform"  # Must match your Slicer transform nod
 # Sensitivity tuning — adjust these to taste
 SENSITIVITY: Sensitivity = Sensitivity.uniform(trans=0.005, rot=0.001)
 
+LINK_CHECK_HZ: int = 1   # How often to poll IGTL link state (Hz)
 UPDATE_HZ: int = 500     # How often to push updates
 REORTHOGONALIZE_INTERVAL: int = 1000  # Re-orthogonalize rotation matrix every N iterations
 
@@ -56,6 +59,11 @@ def _stream_loop(
     next_tick = time.monotonic()
     vis_counter = 0
 
+    log = logging.getLogger("greifer")
+    link_up = client.is_connected()
+    link_check_interval = max(1, round(1.0 / (dt * LINK_CHECK_HZ))) if dt > 0 else 500
+    link_check_counter = 0
+
     while True:
         if cmd_queue is not None:
             try:
@@ -66,6 +74,17 @@ def _stream_loop(
                     sensitivity = cmd[1]
             except queue_module.Empty:
                 pass
+
+        link_check_counter += 1
+        if link_check_counter >= link_check_interval:
+            link_check_counter = 0
+            up = client.is_connected()
+            if up != link_up:
+                link_up = up
+                if up:
+                    log.info("IGTL link restored")
+                else:
+                    log.warning("IGTL link lost — is 3D Slicer still running?")
 
         state = device.read()
 
@@ -110,6 +129,12 @@ def _stream_loop(
 def main() -> None:
     console = Console()
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        handlers=[RichHandler(console=console, show_path=False)],
+    )
+
     # ── Settings overview panel ───────────────────────────────────
     table = Table(show_header=False, box=None, padding=(0, 2))
     table.add_column(style="bold")
@@ -137,8 +162,17 @@ def main() -> None:
         client = pyigtl.OpenIGTLinkClient(
             host=SLICER_HOST, port=SLICER_PORT
         )
-        time.sleep(1)
-    console.print("✓ Connected to 3D Slicer", style="green")
+        deadline = time.monotonic() + 5
+        while not client.is_connected() and time.monotonic() < deadline:
+            time.sleep(0.1)
+
+    if client.is_connected():
+        console.print("✓ Connected to 3D Slicer", style="green")
+    else:
+        console.print(
+            "⚠ 3D Slicer not reachable — check that OpenIGTLinkIF is running",
+            style="bold yellow",
+        )
 
     # ── Spawn visualization process ──────────────────────────────
     vis_queue: Queue | None = None

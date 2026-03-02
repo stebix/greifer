@@ -14,6 +14,7 @@ from numpy.testing import assert_allclose
 import pytest
 
 from greifer.app import _stream_loop
+from greifer.target import TargetManager
 from conftest import FakeDevice, FakeState, FakeClient, StopStreaming
 
 
@@ -358,3 +359,91 @@ class TestLinkHealthCheck:
                 _stream_loop(device, client, vis_queue=None, dt=DT)
 
         assert any("IGTL link lost" in r.message for r in caplog.records)
+
+
+# ── Target switching ──────────────────────────────────────────────────
+
+
+class TestTargetSwitching:
+
+    def test_messages_use_active_target_device_name(self):
+        """Sent messages carry the active target's name as device_name."""
+        tm = TargetManager(["A", "B"])
+        device = FakeDevice([FakeState(x=100.0)])
+        client = FakeClient()
+
+        with pytest.raises(StopStreaming):
+            _stream_loop(device, client, vis_queue=None, dt=DT, target_manager=tm)
+
+        assert client.messages[0].device_name == "A"
+
+    def test_switch_target_command_changes_device_name(self):
+        """After a switch_target command, subsequent messages use the new name."""
+        tm = TargetManager(["A", "B"])
+        states = [
+            FakeState(x=100.0, t=0.0),  # sent as A
+            FakeState(x=100.0, t=0.1),  # sent as B (after switch)
+        ]
+        device = FakeDevice(states)
+        client = FakeClient()
+        cmd_queue = queue_module.Queue()
+        cmd_queue.put(("switch_target", "B"))
+
+        with pytest.raises(StopStreaming):
+            _stream_loop(
+                device, client, vis_queue=None, dt=DT,
+                cmd_queue=cmd_queue, target_manager=tm,
+            )
+
+        # First message: immediate send from switch_target (B's identity matrix)
+        assert client.messages[0].device_name == "B"
+        # Second message: first device read, still sent as A (cmd processed before read)
+        # Wait — the command is processed before the first read, so:
+        # cmd processed → switch to B → immediate send (B identity) → read state → send as B
+        assert client.messages[1].device_name == "B"
+
+    def test_switch_target_sends_immediate_matrix(self):
+        """Switching target sends the new target's current matrix immediately."""
+        tm = TargetManager(["A", "B"])
+        # Pre-move B so its matrix is non-identity
+        tm.switch_to("B")
+        tm.update(5.0, 0, 0, 0, 0, 0)
+        expected_matrix = tm.active_accumulator.matrix.copy()
+        tm.switch_to("A")  # back to A as starting state
+
+        device = FakeDevice([FakeState()])  # zero motion → no regular send
+        client = FakeClient()
+        cmd_queue = queue_module.Queue()
+        cmd_queue.put(("switch_target", "B"))
+
+        with pytest.raises(StopStreaming):
+            _stream_loop(
+                device, client, vis_queue=None, dt=DT,
+                cmd_queue=cmd_queue, target_manager=tm,
+            )
+
+        # Only message is the immediate send from switch
+        assert len(client.messages) == 1
+        assert client.messages[0].device_name == "B"
+        assert_allclose(client.messages[0].matrix, expected_matrix)
+
+    def test_targets_accumulate_independently(self):
+        """Moving target A does not affect target B's accumulated state."""
+        from greifer.app import SENSITIVITY
+        tm = TargetManager(["A", "B"])
+        states = [
+            FakeState(x=100.0, t=0.0),  # moves A
+            FakeState(x=100.0, t=0.1),  # moves A again
+        ]
+        device = FakeDevice(states)
+        client = FakeClient()
+
+        with pytest.raises(StopStreaming):
+            _stream_loop(
+                device, client, vis_queue=None, dt=DT, target_manager=tm,
+            )
+
+        # B should still be at identity
+        assert_allclose(tm._targets["B"].matrix, np.eye(4))
+        # A should have accumulated translation
+        assert tm._targets["A"].matrix[0, 3] != 0.0

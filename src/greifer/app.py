@@ -1,3 +1,4 @@
+import argparse
 import io
 import logging
 import multiprocessing
@@ -16,10 +17,10 @@ from rich.logging import RichHandler
 from rich.table import Table
 from rich.panel import Panel
 
+from greifer.target import TargetManager
 from greifer.transform import (
     DofLockFilter,
     Sensitivity,
-    TransformAccumulator,
     compute_increments,
 )
 
@@ -27,7 +28,7 @@ from greifer.transform import (
 # ── Configuration ──────────────────────────────────────────────
 SLICER_HOST: str = "127.0.0.1"
 SLICER_PORT: int = 18944
-DEVICE_NAME: str = "SpaceMouseTransform"  # Must match your Slicer transform node name
+DEFAULT_TARGETS: list[str] = ["SpaceMouseTransform"]
 
 # Sensitivity tuning — adjust these to taste
 SENSITIVITY: Sensitivity = Sensitivity.uniform(trans=0.005, rot=0.001)
@@ -116,11 +117,14 @@ def _stream_loop(
     dof_filter: DofLockFilter | None = None,
     cmd_queue: Queue | None = None,
     sensitivity: Sensitivity = SENSITIVITY,
+    target_manager: TargetManager | None = None,
 ) -> None:
     """Hot path: read SpaceMouse, compute transform, send to Slicer."""
-    accumulator = TransformAccumulator(
-        reorthogonalize_interval=REORTHOGONALIZE_INTERVAL
-    )
+    if target_manager is None:
+        target_manager = TargetManager(
+            DEFAULT_TARGETS,
+            reorthogonalize_interval=REORTHOGONALIZE_INTERVAL,
+        )
     next_tick = time.monotonic()
     vis_counter = 0
 
@@ -137,6 +141,15 @@ def _stream_loop(
                     dof_filter.toggle(cmd[1])
                 elif cmd[0] == "sensitivity":
                     sensitivity = cmd[1]
+                elif cmd[0] == "switch_target":
+                    matrix = target_manager.switch_to(cmd[1])
+                    client.send_message(
+                        pyigtl.TransformMessage(
+                            matrix,
+                            device_name=target_manager.active_name,
+                        )
+                    )
+                    log.info("Switched target to %s", target_manager.active_name)
             except queue_module.Empty:
                 pass
 
@@ -176,10 +189,10 @@ def _stream_loop(
         if increments is not None:
             if dof_filter is not None:
                 increments = dof_filter.apply(*increments)
-            matrix = accumulator.update(*increments)
+            matrix = target_manager.update(*increments)
 
             transform_msg = pyigtl.TransformMessage(
-                matrix, device_name=DEVICE_NAME
+                matrix, device_name=target_manager.active_name,
             )
             client.send_message(transform_msg)
 
@@ -191,10 +204,37 @@ def _stream_loop(
             next_tick = time.monotonic()
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="greifer",
+        description="Stream SpaceMouse transforms to 3D Slicer via OpenIGTLink.",
+    )
+    parser.add_argument(
+        "--targets",
+        nargs="+",
+        default=DEFAULT_TARGETS,
+        metavar="NAME",
+        help=(
+            "One or more Slicer transform-node names to target. "
+            "The first name becomes the initial active target. "
+            f"(default: {DEFAULT_TARGETS})"
+        ),
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = _parse_args()
+    target_names: list[str] = args.targets
+
     console = Console()
 
     _setup_logging(console)
+
+    target_manager = TargetManager(
+        target_names,
+        reorthogonalize_interval=REORTHOGONALIZE_INTERVAL,
+    )
 
     # ── Settings overview panel ───────────────────────────────────
     table = Table(show_header=False, box=None, padding=(0, 2))
@@ -210,7 +250,8 @@ def main() -> None:
         f"enabled (1:{VIS_STRIDE} decimation)" if ENABLE_VISUALIZATION else "disabled",
     )
     table.add_row()
-    table.add_row("SpaceMouse", DEVICE_NAME)
+    table.add_row("Targets", ", ".join(target_names))
+    table.add_row("Active", target_manager.active_name)
     table.add_row("3D Slicer", f"{SLICER_HOST}:{SLICER_PORT}")
     from greifer import __version__
 
@@ -246,7 +287,9 @@ def main() -> None:
         vis_queue = multiprocessing.Queue(maxsize=600)
         cmd_queue = multiprocessing.Queue(maxsize=64)
         vis_process = multiprocessing.Process(
-            target=run_visualization, args=(vis_queue, cmd_queue, SENSITIVITY), daemon=True
+            target=run_visualization,
+            args=(vis_queue, cmd_queue, SENSITIVITY, target_names),
+            daemon=True,
         )
         vis_process.start()
 
@@ -264,6 +307,7 @@ def main() -> None:
                     vis_stride=VIS_STRIDE,
                     dof_filter=dof_filter,
                     cmd_queue=cmd_queue,
+                    target_manager=target_manager,
                 )
 
         except KeyboardInterrupt:

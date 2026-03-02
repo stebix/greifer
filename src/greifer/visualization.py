@@ -10,8 +10,11 @@ from typing import NamedTuple
 import numpy as np
 import pyqtgraph as pg
 
+from collections.abc import Sequence
+
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDoubleSpinBox,
     QGridLayout,
     QHBoxLayout,
@@ -27,7 +30,7 @@ from PyQt6.QtGui import QFont
 
 from greifer.transform import Axis, Sensitivity
 
-type Command = tuple[str, Axis] | tuple[str, Sensitivity]
+type Command = tuple[str, Axis] | tuple[str, Sensitivity] | tuple[str, str]
 
 
 MAXLEN = 600  # ~10 s of visible history (producer decimates to ~VIS_HZ)
@@ -201,6 +204,37 @@ _CHANNEL_AXIS: tuple[tuple[str, str, Axis], ...] = (
 
 
 _TRANS_AXES = frozenset({Axis.X, Axis.Y, Axis.Z})
+
+
+class TargetPanel(QWidget):
+    """Side panel with a dropdown for selecting the active target structure."""
+
+    def __init__(
+        self,
+        cmd_queue: Queue[Command],
+        target_names: Sequence[str],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._cmd_queue = cmd_queue
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        header = QLabel("Target")
+        header.setStyleSheet("font-weight: bold; font-size: 13px;")
+        layout.addWidget(header)
+
+        self._combo = QComboBox()
+        self._combo.addItems(list(target_names))
+        self._combo.currentTextChanged.connect(self._on_selection_changed)
+        layout.addWidget(self._combo)
+
+    def _on_selection_changed(self, name: str) -> None:
+        try:
+            self._cmd_queue.put_nowait(("switch_target", name))
+        except (Full, BrokenPipeError, OSError):
+            pass
 
 
 class DofLockPanel(QWidget):
@@ -483,14 +517,16 @@ class SensitivityPanel(QWidget):
 def _build_right_panel(
     cmd_queue: Queue[Command],
     sensitivity: Sensitivity,
+    target_names: Sequence[str],
 ) -> tuple[QWidget, DofLockPanel]:
-    """Assemble the lock + sensitivity sidebar."""
+    """Assemble the target selector + lock + sensitivity sidebar."""
     panel = QWidget()
     panel.setFixedWidth(220)
     layout = QVBoxLayout(panel)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(0)
 
+    layout.addWidget(TargetPanel(cmd_queue, target_names))
     lock_panel = DofLockPanel(cmd_queue)
     layout.addWidget(lock_panel)
     layout.addWidget(SensitivityPanel(cmd_queue, sensitivity))
@@ -503,6 +539,7 @@ def run_visualization(
     data_queue: Queue[Sample | None],
     cmd_queue: Queue[Command],
     initial_sensitivity: Sensitivity | None = None,
+    target_names: Sequence[str] = ("SpaceMouseTransform",),
 ) -> None:
     """Process entry point for the 6-DOF visualization window."""
     if initial_sensitivity is None:
@@ -523,7 +560,7 @@ def run_visualization(
     h_layout.addWidget(graph_widget, stretch=1)
 
     right_panel, lock_panel = _build_right_panel(
-        cmd_queue, initial_sensitivity,
+        cmd_queue, initial_sensitivity, target_names,
     )
     h_layout.addWidget(right_panel, stretch=0)
 

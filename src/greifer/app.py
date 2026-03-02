@@ -1,6 +1,9 @@
+import io
 import logging
 import multiprocessing
+import os
 import queue as queue_module
+import sys
 import time
 
 from multiprocessing.queues import Queue
@@ -37,7 +40,69 @@ ENABLE_VISUALIZATION: bool = True
 
 VIS_HZ: int = 60                           # Visualization target rate
 VIS_STRIDE: int = UPDATE_HZ // VIS_HZ      # Enqueue every Nth sample (=8)
+
+LOG_LEVEL: str = os.environ.get("GREIFER_LOG_LEVEL", "INFO").upper()
+LOG_FILE: str | None = os.environ.get("GREIFER_LOG_FILE")
 # ───────────────────────────────────────────────────────────────
+
+
+class _StderrToLogger(io.TextIOBase):
+    """Route stderr writes (e.g. pyigtl's traceback.print_exc()) to logging."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._logger = logging.getLogger("greifer.stderr")
+        self._buf = ""
+
+    def write(self, s: str) -> int:
+        self._buf += s
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            if line:
+                self._logger.debug("%s", line)
+        return len(s)
+
+    def flush(self) -> None:
+        if self._buf:
+            self._logger.debug("%s", self._buf)
+            self._buf = ""
+
+
+def _setup_logging(console: "Console") -> None:
+    """Configure greifer and root loggers, redirect stderr."""
+    level_name = LOG_LEVEL if LOG_LEVEL in logging._nameToLevel else "INFO"
+    level = logging.getLevelName(level_name)
+
+    greifer_logger = logging.getLogger("greifer")
+    greifer_logger.setLevel(logging.DEBUG)
+
+    console_handler = RichHandler(console=console, show_path=False)
+    console_handler.setLevel(level)
+    greifer_logger.addHandler(console_handler)
+
+    if LOG_FILE:
+        file_handler = logging.FileHandler(LOG_FILE)
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+        )
+        greifer_logger.addHandler(file_handler)
+
+    # Silence pyigtl's logging.error() calls (they go through the root logger)
+    logging.getLogger().addHandler(logging.NullHandler())
+
+    # Redirect OS-level stderr (fd 2) to devnull so that anything bypassing
+    # the Python sys.stderr object (C extensions, fallback writes from
+    # threading.excepthook) is silently discarded instead of hitting the
+    # console.  Rich Console already holds its own reference to stdout,
+    # so this does not affect any application output.
+    _devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(_devnull_fd, 2)
+    os.close(_devnull_fd)
+
+    # Replace the Python-level sys.stderr so traceback.print_exc() writes
+    # are captured and routed through logging (→ log file at DEBUG level).
+    sys.stderr = _StderrToLogger()  # type: ignore[assignment]
 
 
 
@@ -129,11 +194,7 @@ def _stream_loop(
 def main() -> None:
     console = Console()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        handlers=[RichHandler(console=console, show_path=False)],
-    )
+    _setup_logging(console)
 
     # ── Settings overview panel ───────────────────────────────────
     table = Table(show_header=False, box=None, padding=(0, 2))

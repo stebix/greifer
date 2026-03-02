@@ -78,6 +78,14 @@ class Axis(StrEnum):
     PITCH = "pitch"
     YAW = "yaw"
 
+    @property
+    def index(self) -> int:
+        """Positional index in the (x, y, z, roll, pitch, yaw) tuple."""
+        return _AXIS_ORDER.index(self)
+
+
+_AXIS_ORDER: tuple[Axis, ...] = tuple(Axis)
+
 
 class DofLockFilter:
     """Zeros locked axes in a 6-DOF increment tuple.
@@ -85,12 +93,6 @@ class DofLockFilter:
     Sits between ``compute_increments`` and ``TransformAccumulator.update``
     in the pipeline, leaving both untouched.
     """
-
-    # Maps each Axis to its index in the (dx, dy, dz, rx, ry, rz) tuple.
-    _INDEX: dict["Axis", int] = {
-        Axis.X: 0, Axis.Y: 1, Axis.Z: 2,
-        Axis.ROLL: 3, Axis.PITCH: 4, Axis.YAW: 5,
-    }
 
     def __init__(self, locked: set[Axis] | None = None) -> None:
         self._locked: set[Axis] = set(locked) if locked else set()
@@ -124,7 +126,7 @@ class DofLockFilter:
         """Return the increment tuple with locked axes zeroed."""
         vals = [dx, dy, dz, rx, ry, rz]
         for axis in self._locked:
-            vals[self._INDEX[axis]] = 0.0
+            vals[axis.index] = 0.0
         return (vals[0], vals[1], vals[2], vals[3], vals[4], vals[5])
 
 

@@ -1,28 +1,31 @@
-"""Unit tests for the visualization queue drain logic and DOF lock panel.
-
-The _Visualizer.__init__ requires a QApplication and pyqtgraph widgets,
-but _drain_queue only touches _queue, _t_offset, and _bufs. We bypass
-the Qt constructor via object.__new__ and set up just those fields.
-"""
+"""Unit tests for the visualization queue drain logic and DOF lock panel."""
 
 import queue as queue_module
-from collections import deque
 
 import pytest
 
 from unittest.mock import MagicMock
 
 from greifer.transform import Axis, Sensitivity
-from greifer.visualization import _Visualizer, DofLockPanel, SensitivityPanel, CHANNELS, MAXLEN
+from greifer.visualization import (
+    _Visualizer, DofLockPanel, SensitivityPanel, CHANNELS, MAXLEN,
+)
 
 
-def _make_drain_target(q: queue_module.Queue) -> _Visualizer:
-    """Create a _Visualizer with only the fields needed for _drain_queue."""
-    viz = object.__new__(_Visualizer)
-    viz._queue = q
-    viz._t_offset = None
-    viz._bufs = [deque(maxlen=MAXLEN) for _ in range(7)]
-    return viz
+def _make_viz(q: queue_module.Queue) -> _Visualizer:
+    """Create a _Visualizer with mock plot objects for non-Qt tests."""
+    app = MagicMock()
+    plots = [MagicMock() for _ in CHANNELS]
+    curves = [MagicMock() for _ in CHANNELS]
+    lock_labels = [MagicMock() for _ in CHANNELS]
+    anchor_plot = MagicMock()
+    return _Visualizer(
+        q, app,
+        plots=plots,
+        curves=curves,
+        lock_labels=lock_labels,
+        anchor_plot=anchor_plot,
+    )
 
 
 def _put_sample(q, t, x=0.0, y=0.0, z=0.0, roll=0.0, pitch=0.0, yaw=0.0):
@@ -37,12 +40,12 @@ class TestDrainEmptyQueue:
 
     def test_returns_true(self):
         q = queue_module.Queue()
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         assert viz._drain_queue() is True
 
     def test_buffers_remain_empty(self):
         q = queue_module.Queue()
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         viz._drain_queue()
         for buf in viz._bufs:
             assert len(buf) == 0
@@ -56,13 +59,13 @@ class TestSingleSample:
     def test_returns_true(self):
         q = queue_module.Queue()
         _put_sample(q, t=10.0, x=1.0, y=2.0, z=3.0)
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         assert viz._drain_queue() is True
 
     def test_populates_all_seven_buffers(self):
         q = queue_module.Queue()
         _put_sample(q, t=10.0, x=1.0, y=2.0, z=3.0, roll=4.0, pitch=5.0, yaw=6.0)
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         viz._drain_queue()
         for buf in viz._bufs:
             assert len(buf) == 1
@@ -70,14 +73,14 @@ class TestSingleSample:
     def test_time_offset_set_from_first_sample(self):
         q = queue_module.Queue()
         _put_sample(q, t=42.0)
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         viz._drain_queue()
         assert viz._t_offset == 42.0
 
     def test_time_stored_relative_to_offset(self):
         q = queue_module.Queue()
         _put_sample(q, t=42.0)
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         viz._drain_queue()
         # Relative time: 42.0 - 42.0 = 0.0
         assert viz._bufs[0][0] == pytest.approx(0.0)
@@ -85,7 +88,7 @@ class TestSingleSample:
     def test_channel_values_stored_as_is(self):
         q = queue_module.Queue()
         _put_sample(q, t=10.0, x=1.0, y=2.0, z=3.0, roll=4.0, pitch=5.0, yaw=6.0)
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         viz._drain_queue()
         assert viz._bufs[1][0] == pytest.approx(1.0)  # x
         assert viz._bufs[2][0] == pytest.approx(2.0)  # y
@@ -103,14 +106,14 @@ class TestShutdownSentinel:
     def test_none_returns_false(self):
         q = queue_module.Queue()
         q.put_nowait(None)
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         assert viz._drain_queue() is False
 
     def test_samples_before_sentinel_are_processed(self):
         q = queue_module.Queue()
         _put_sample(q, t=1.0, x=10.0)
         q.put_nowait(None)
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         result = viz._drain_queue()
         assert result is False
         # The sample before the sentinel should have been stored
@@ -126,7 +129,7 @@ class TestNegativeTimestamp:
     def test_negative_t_skipped(self):
         q = queue_module.Queue()
         _put_sample(q, t=-1.0, x=99.0)
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         viz._drain_queue()
         # Sample should have been discarded
         for buf in viz._bufs:
@@ -135,7 +138,7 @@ class TestNegativeTimestamp:
     def test_negative_t_does_not_set_offset(self):
         q = queue_module.Queue()
         _put_sample(q, t=-1.0)
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         viz._drain_queue()
         assert viz._t_offset is None
 
@@ -143,7 +146,7 @@ class TestNegativeTimestamp:
         q = queue_module.Queue()
         _put_sample(q, t=-1.0, x=1.0)   # skipped
         _put_sample(q, t=5.0, x=2.0)    # kept, sets offset
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         viz._drain_queue()
         assert len(viz._bufs[0]) == 1
         assert viz._t_offset == 5.0
@@ -159,7 +162,7 @@ class TestTimeOffset:
     def test_offset_locked_to_first_valid_sample(self):
         q = queue_module.Queue()
         _put_sample(q, t=100.0)
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         viz._drain_queue()
 
         # Second drain with a later timestamp
@@ -176,7 +179,7 @@ class TestTimeOffset:
         _put_sample(q, t=10.0, x=1.0)
         _put_sample(q, t=11.0, x=2.0)
         _put_sample(q, t=12.0, x=3.0)
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         viz._drain_queue()
 
         assert len(viz._bufs[0]) == 3
@@ -193,7 +196,7 @@ class TestBufferCapacity:
         q = queue_module.Queue()
         for i in range(MAXLEN + 100):
             _put_sample(q, t=float(i), x=float(i))
-        viz = _make_drain_target(q)
+        viz = _make_viz(q)
         viz._drain_queue()
 
         # Deques should have capped at MAXLEN
@@ -354,16 +357,24 @@ class TestSensitivityPanel:
 
 
 def _make_lock_target() -> _Visualizer:
-    """Create a _Visualizer with only the fields needed for set_axis_locked."""
-    viz = object.__new__(_Visualizer)
-    viz._lock_labels = []
-    viz._curves = []
+    """Create a _Visualizer with mock objects for lock-indicator tests."""
+    q = queue_module.Queue()
+    app = MagicMock()
+    plots = [MagicMock() for _ in CHANNELS]
+    curves = [MagicMock() for _ in CHANNELS]
+    lock_labels = []
     for _ in CHANNELS:
         label = MagicMock()
         label.isVisible.return_value = False
-        viz._lock_labels.append(label)
-        viz._curves.append(MagicMock())
-    return viz
+        lock_labels.append(label)
+    anchor_plot = MagicMock()
+    return _Visualizer(
+        q, app,
+        plots=plots,
+        curves=curves,
+        lock_labels=lock_labels,
+        anchor_plot=anchor_plot,
+    )
 
 
 class TestLockIndicators:

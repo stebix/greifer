@@ -1,7 +1,7 @@
 """Real-time 6-DOF SpaceMouse visualization using pyqtgraph."""
 
-import multiprocessing
-import queue as queue_module
+from multiprocessing.queues import Queue
+from queue import Empty, Full
 import signal
 
 from collections import deque
@@ -27,12 +27,22 @@ from PyQt6.QtGui import QFont
 
 from greifer.transform import Axis, Sensitivity
 
+type Command = tuple[str, Axis] | tuple[str, Sensitivity]
+
 
 MAXLEN = 600  # ~10 s of visible history (producer decimates to ~VIS_HZ)
 RENDER_HZ = 60
 WINDOW_SECONDS = 10.0
 
-type Sample = tuple[float, float, float, float, float, float, float]
+
+class Sample(NamedTuple):
+    t: float
+    x: float
+    y: float
+    z: float
+    roll: float
+    pitch: float
+    yaw: float
 
 
 class Channel(NamedTuple):
@@ -52,59 +62,84 @@ CHANNELS: tuple[Channel, ...] = (
 )
 
 
+def _build_plot_grid(
+    win: pg.GraphicsLayoutWidget,
+) -> tuple[
+    list[pg.PlotItem],
+    list[pg.PlotDataItem],
+    list[pg.TextItem],
+    pg.PlotItem,
+]:
+    """Create the 6-panel plot grid.
+
+    Returns (plots, curves, lock_labels, anchor_plot).
+    """
+    plots: list[pg.PlotItem] = []
+    curves: list[pg.PlotDataItem] = []
+    lock_labels: list[pg.TextItem] = []
+    anchor_plot: pg.PlotItem | None = None
+
+    bold_font = QFont()
+    bold_font.setBold(True)
+
+    for ch in CHANNELS:
+        p = win.addPlot(row=ch.row, col=ch.col, title=ch.name)
+        p.setLabel("left", ch.name)
+        p.setLabel("bottom", "Time", units="s")
+        p.getAxis("bottom").enableAutoSIPrefix(False)
+        p.setYRange(-1.0, 1.0)
+        p.showGrid(x=True, y=True, alpha=0.3)
+
+        if anchor_plot is None:
+            anchor_plot = p
+        else:
+            p.setXLink(anchor_plot)
+
+        curves.append(p.plot(pen=pg.mkPen(ch.color, width=2)))
+        plots.append(p)
+
+        label = pg.TextItem("Locked", color="#ccc", anchor=(0, 0))
+        label.setFont(bold_font)
+        label.hide()
+        p.addItem(label, ignoreBounds=True)
+        lock_labels.append(label)
+
+    if anchor_plot is None:
+        raise ValueError("CHANNELS must not be empty")
+    return plots, curves, lock_labels, anchor_plot
+
+
 class _Visualizer:
     """Encapsulates mutable plot state and the update loop."""
 
     def __init__(
         self,
-        queue: multiprocessing.Queue,
+        queue: Queue[Sample | None],
         app: QApplication,
-        win: pg.GraphicsLayoutWidget,
+        *,
+        plots: list[pg.PlotItem],
+        curves: list[pg.PlotDataItem],
+        lock_labels: list[pg.TextItem],
+        anchor_plot: pg.PlotItem,
     ) -> None:
         self._queue = queue
         self._app = app
+        self._plots = plots
+        self._curves = curves
+        self._lock_labels = lock_labels
+        self._first_plot = anchor_plot
 
         self._t_offset: float | None = None
-        self._bufs: list[deque[float]] = [deque(maxlen=MAXLEN) for _ in range(7)]
-        self._curves: list[pg.PlotDataItem] = []
-        self._plots: list[pg.PlotItem] = []
-        self._lock_labels: list[pg.TextItem] = []
-
-        first_plot: pg.PlotItem | None = None
-        bold_font = QFont()
-        bold_font.setBold(True)
-
-        for ch in CHANNELS:
-            p = win.addPlot(row=ch.row, col=ch.col, title=ch.name)
-            p.setLabel("left", ch.name)
-            p.setLabel("bottom", "Time", units="s")
-            p.getAxis("bottom").enableAutoSIPrefix(False)
-            p.setYRange(-1.0, 1.0)
-            p.showGrid(x=True, y=True, alpha=0.3)
-
-            if first_plot is None:
-                first_plot = p
-            else:
-                p.setXLink(first_plot)
-
-            self._curves.append(p.plot(pen=pg.mkPen(ch.color, width=2)))
-            self._plots.append(p)
-
-            label = pg.TextItem("Locked", color="#ccc", anchor=(0, 0))
-            label.setFont(bold_font)
-            label.hide()
-            p.addItem(label, ignoreBounds=True)
-            self._lock_labels.append(label)
-
-        assert first_plot is not None
-        self._first_plot: pg.PlotItem = first_plot
+        self._bufs: list[deque[float]] = [
+            deque(maxlen=MAXLEN) for _ in Sample._fields
+        ]
 
     def _drain_queue(self) -> bool:
         """Read all pending samples. Return False if shutdown sentinel received."""
         while True:
             try:
                 sample: Sample | None = self._queue.get_nowait()
-            except queue_module.Empty:
+            except Empty:
                 return True
             if sample is None:
                 return False
@@ -128,7 +163,7 @@ class _Visualizer:
 
         t_arr = np.array(self._bufs[0])
 
-        for i in range(len(CHANNELS)):
+        for i, _ch in enumerate(CHANNELS):
             arr = np.array(self._bufs[i + 1])
             self._curves[i].setData(t_arr, arr)
 
@@ -173,7 +208,7 @@ class DofLockPanel(QWidget):
 
     def __init__(
         self,
-        cmd_queue: multiprocessing.Queue,
+        cmd_queue: Queue[Command],
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -211,7 +246,7 @@ class DofLockPanel(QWidget):
     def _on_toggle(self, axis: Axis) -> None:
         try:
             self._cmd_queue.put_nowait(("toggle", axis))
-        except (queue_module.Full, BrokenPipeError, OSError):
+        except (Full, BrokenPipeError, OSError):
             pass
 
     @staticmethod
@@ -242,7 +277,7 @@ class SensitivityPanel(QWidget):
 
     def __init__(
         self,
-        cmd_queue: multiprocessing.Queue,
+        cmd_queue: Queue[Command],
         initial: Sensitivity,
         parent: QWidget | None = None,
     ) -> None:
@@ -406,7 +441,7 @@ class SensitivityPanel(QWidget):
         self._sensitivity = sens
         try:
             self._cmd_queue.put_nowait(("sensitivity", sens))
-        except (queue_module.Full, BrokenPipeError, OSError):
+        except (Full, BrokenPipeError, OSError):
             pass
 
     def _on_tab_changed(self, index: int) -> None:
@@ -445,9 +480,28 @@ class SensitivityPanel(QWidget):
         self._emit_sensitivity()
 
 
+def _build_right_panel(
+    cmd_queue: Queue[Command],
+    sensitivity: Sensitivity,
+) -> tuple[QWidget, DofLockPanel]:
+    """Assemble the lock + sensitivity sidebar."""
+    panel = QWidget()
+    panel.setFixedWidth(220)
+    layout = QVBoxLayout(panel)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+
+    lock_panel = DofLockPanel(cmd_queue)
+    layout.addWidget(lock_panel)
+    layout.addWidget(SensitivityPanel(cmd_queue, sensitivity))
+    layout.addStretch()
+
+    return panel, lock_panel
+
+
 def run_visualization(
-    data_queue: multiprocessing.Queue,
-    cmd_queue: multiprocessing.Queue,
+    data_queue: Queue[Sample | None],
+    cmd_queue: Queue[Command],
     initial_sensitivity: Sensitivity | None = None,
 ) -> None:
     """Process entry point for the 6-DOF visualization window."""
@@ -468,30 +522,27 @@ def run_visualization(
     graph_widget = pg.GraphicsLayoutWidget()
     h_layout.addWidget(graph_widget, stretch=1)
 
-    right_panel = QWidget()
-    right_panel.setFixedWidth(220)
-    right_layout = QVBoxLayout(right_panel)
-    right_layout.setContentsMargins(0, 0, 0, 0)
-    right_layout.setSpacing(0)
-
-    lock_panel = DofLockPanel(cmd_queue)
-    right_layout.addWidget(lock_panel)
-    right_layout.addWidget(SensitivityPanel(cmd_queue, initial_sensitivity))
-    right_layout.addStretch()
-
+    right_panel, lock_panel = _build_right_panel(
+        cmd_queue, initial_sensitivity,
+    )
     h_layout.addWidget(right_panel, stretch=0)
 
     main_window.show()
 
-    viz = _Visualizer(data_queue, app, graph_widget)
+    plots, curves, lock_labels, anchor = _build_plot_grid(graph_widget)
+    viz = _Visualizer(
+        data_queue, app,
+        plots=plots,
+        curves=curves,
+        lock_labels=lock_labels,
+        anchor_plot=anchor,
+    )
 
-    _AXIS_TO_INDEX: dict[Axis, int] = {
-        Axis.X: 0, Axis.Y: 1, Axis.Z: 2,
-        Axis.ROLL: 3, Axis.PITCH: 4, Axis.YAW: 5,
-    }
     for axis, btn in lock_panel.buttons.items():
-        idx = _AXIS_TO_INDEX[axis]
-        btn.toggled.connect(lambda checked, i=idx: viz.set_axis_locked(i, checked))
+        idx = axis.index
+        btn.toggled.connect(
+            lambda checked, i=idx: viz.set_axis_locked(i, checked)
+        )
 
     timer = QTimer()
     timer.timeout.connect(viz.update)

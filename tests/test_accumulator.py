@@ -211,6 +211,33 @@ class TestReorthogonalization:
         assert _is_valid_rotation(acc.rotation, atol=1e-6)
 
 
+# ── Reset ─────────────────────────────────────────────────────────────
+
+
+class TestReset:
+
+    def test_reset_restores_identity(self):
+        acc = TransformAccumulator()
+        acc.update(1.0, 2.0, 3.0, 0.1, 0.2, 0.3)
+        acc.reset()
+        assert_allclose(acc.matrix, np.eye(4), atol=ATOL)
+
+    def test_reset_clears_iteration_counter(self):
+        acc = TransformAccumulator()
+        for _ in range(10):
+            acc.update(0.0, 0.0, 0.0, 0.001, 0.0, 0.0)
+        assert acc._iteration == 10
+        acc.reset()
+        assert acc._iteration == 0
+
+    def test_reset_then_update_accumulates_from_identity(self):
+        acc = TransformAccumulator()
+        acc.update(5.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        acc.reset()
+        acc.update(1.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        assert_allclose(acc.translation, [1.0, 0.0, 0.0], atol=ATOL)
+
+
 # ── Property-based tests ─────────────────────────────────────────────
 
 

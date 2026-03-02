@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 from greifer.transform import Axis, Sensitivity
 from greifer.visualization import (
-    _Visualizer, DofLockPanel, SensitivityPanel, CHANNELS, MAXLEN,
+    _Visualizer, DofLockPanel, HardenPanel, SensitivityPanel, CHANNELS, MAXLEN,
 )
 
 
@@ -235,6 +235,33 @@ class TestDofLockPanel:
             btn.toggle()
             cmd = q.get_nowait()
             assert cmd == ("toggle", axis)
+
+
+# ── HardenPanel ────────────────────────────────────────────────
+
+
+class TestHardenPanel:
+
+    def test_has_harden_button(self, qapp):
+        q = queue_module.Queue()
+        panel = HardenPanel(q)
+        assert panel._btn.text() == "Harden"
+
+    def test_clicking_enqueues_harden_command(self, qapp):
+        q = queue_module.Queue()
+        panel = HardenPanel(q)
+
+        panel._btn.click()
+
+        cmd = q.get_nowait()
+        assert cmd == ("harden", None)
+
+    def test_full_queue_does_not_crash(self, qapp):
+        q = queue_module.Queue(maxsize=1)
+        q.put_nowait(("dummy",))  # fill queue
+        panel = HardenPanel(q)
+        # Should not raise
+        panel._btn.click()
 
 
 # ── SensitivityPanel ────────────────────────────────────────────

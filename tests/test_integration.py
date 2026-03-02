@@ -11,6 +11,7 @@ import queue as queue_module
 import numpy as np
 from numpy.testing import assert_allclose
 
+import pyigtl
 import pytest
 
 from greifer.app import _stream_loop
@@ -446,3 +447,78 @@ class TestTargetSwitching:
         assert_allclose(tm._targets["B"].matrix, np.eye(4))
         # A should have accumulated translation
         assert tm._targets["A"].matrix[0, 3] != 0.0
+
+
+# ── Harden command ───────────────────────────────────────────────────
+
+
+class TestHardenCommand:
+
+    def test_harden_sends_string_then_identity(self):
+        """Harden sends a StringMessage then an identity TransformMessage."""
+        tm = TargetManager(["A"])
+        tm.update(1.0, 0, 0, 0, 0, 0)  # accumulate something
+
+        device = FakeDevice([FakeState()])  # zero motion → no regular send
+        client = FakeClient()
+        cmd_queue = queue_module.Queue()
+        cmd_queue.put(("harden", None))
+
+        with pytest.raises(StopStreaming):
+            _stream_loop(
+                device, client, vis_queue=None, dt=DT,
+                cmd_queue=cmd_queue, target_manager=tm,
+            )
+
+        assert len(client.messages) == 2
+        # First message: StringMessage with device_name "GreiferHarden"
+        assert isinstance(client.messages[0], pyigtl.StringMessage)
+        assert client.messages[0].device_name == "GreiferHarden"
+        assert client.messages[0].string == "A"
+        # Second message: identity TransformMessage with device_name "A"
+        assert isinstance(client.messages[1], pyigtl.TransformMessage)
+        assert client.messages[1].device_name == "A"
+        assert_allclose(client.messages[1].matrix, np.eye(4))
+
+    def test_harden_resets_accumulator(self):
+        """After harden, the active accumulator is identity."""
+        tm = TargetManager(["A"])
+        tm.update(1.0, 0, 0, 0, 0, 0)
+
+        device = FakeDevice([FakeState()])
+        client = FakeClient()
+        cmd_queue = queue_module.Queue()
+        cmd_queue.put(("harden", None))
+
+        with pytest.raises(StopStreaming):
+            _stream_loop(
+                device, client, vis_queue=None, dt=DT,
+                cmd_queue=cmd_queue, target_manager=tm,
+            )
+
+        assert_allclose(tm.active_accumulator.matrix, np.eye(4))
+
+    def test_harden_targets_active_only(self):
+        """Hardening only resets the active target; inactive targets are unaffected."""
+        tm = TargetManager(["A", "B"])
+        tm.update(1.0, 0, 0, 0, 0, 0)  # move A
+        tm.switch_to("B")
+        tm.update(2.0, 0, 0, 0, 0, 0)  # move B
+        matrix_a = tm._targets["A"].matrix.copy()
+        tm.switch_to("A")  # switch back to A
+
+        device = FakeDevice([FakeState()])
+        client = FakeClient()
+        cmd_queue = queue_module.Queue()
+        cmd_queue.put(("harden", None))
+
+        with pytest.raises(StopStreaming):
+            _stream_loop(
+                device, client, vis_queue=None, dt=DT,
+                cmd_queue=cmd_queue, target_manager=tm,
+            )
+
+        # A was hardened → identity
+        assert_allclose(tm._targets["A"].matrix, np.eye(4))
+        # B is untouched
+        assert tm._targets["B"].matrix[0, 3] != 0.0

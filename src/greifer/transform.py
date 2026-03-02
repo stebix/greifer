@@ -173,6 +173,11 @@ class TransformAccumulator:
 
         return self.matrix
 
+    def reset(self) -> None:
+        """Reset the accumulated transform to identity."""
+        self.matrix = np.eye(4)
+        self._iteration = 0
+
     def reorthogonalize(self) -> None:
         """SVD polar-factor correction on the rotation submatrix."""
         U, _, Vt = np.linalg.svd(self.matrix[:3, :3])

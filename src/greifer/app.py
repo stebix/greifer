@@ -150,6 +150,19 @@ def _stream_loop(
                         )
                     )
                     log.info("Switched target to %s", target_manager.active_name)
+                elif cmd[0] == "harden":
+                    name = target_manager.active_name
+                    client.send_message(
+                        pyigtl.StringMessage(string=name, device_name="GreiferHarden")
+                    )
+                    target_manager.harden_active()
+                    client.send_message(
+                        pyigtl.TransformMessage(
+                            target_manager.active_accumulator.matrix,
+                            device_name=name,
+                        )
+                    )
+                    log.info("Hardened transform for %s", name)
             except queue_module.Empty:
                 pass
 

@@ -30,7 +30,12 @@ from PyQt6.QtGui import QFont
 
 from greifer.transform import Axis, Sensitivity
 
-type Command = tuple[str, Axis] | tuple[str, Sensitivity] | tuple[str, str]
+type Command = (
+    tuple[str, Axis]
+    | tuple[str, Sensitivity]
+    | tuple[str, str]
+    | tuple[str, None]
+)
 
 
 MAXLEN = 600  # ~10 s of visible history (producer decimates to ~VIS_HZ)
@@ -233,6 +238,31 @@ class TargetPanel(QWidget):
     def _on_selection_changed(self, name: str) -> None:
         try:
             self._cmd_queue.put_nowait(("switch_target", name))
+        except (Full, BrokenPipeError, OSError):
+            pass
+
+
+class HardenPanel(QWidget):
+    """Button to harden the active target's transform."""
+
+    def __init__(self, cmd_queue: Queue[Command], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._cmd_queue = cmd_queue
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        header = QLabel("Transform")
+        header.setStyleSheet("font-weight: bold; font-size: 13px;")
+        layout.addWidget(header)
+
+        self._btn = QPushButton("Harden")
+        self._btn.setToolTip("Bake the current transform into the volume and reset to identity.")
+        self._btn.clicked.connect(self._on_harden)
+        layout.addWidget(self._btn)
+
+    def _on_harden(self) -> None:
+        try:
+            self._cmd_queue.put_nowait(("harden", None))
         except (Full, BrokenPipeError, OSError):
             pass
 
@@ -527,6 +557,7 @@ def _build_right_panel(
     layout.setSpacing(0)
 
     layout.addWidget(TargetPanel(cmd_queue, target_names))
+    layout.addWidget(HardenPanel(cmd_queue))
     lock_panel = DofLockPanel(cmd_queue)
     layout.addWidget(lock_panel)
     layout.addWidget(SensitivityPanel(cmd_queue, sensitivity))

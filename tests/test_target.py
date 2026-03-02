@@ -84,6 +84,34 @@ class TestUpdate:
         assert_allclose(matrix, tm.active_accumulator.matrix)
 
 
+class TestHardenActive:
+
+    def test_harden_resets_active_to_identity(self):
+        tm = TargetManager(["A"])
+        tm.update(1.0, 0, 0, 0, 0, 0)
+        tm.harden_active()
+        assert_allclose(tm.active_accumulator.matrix, np.eye(4))
+
+    def test_harden_does_not_affect_inactive(self):
+        tm = TargetManager(["A", "B"])
+        tm.update(1.0, 0, 0, 0, 0, 0)  # move A
+        tm.switch_to("B")
+        tm.update(2.0, 0, 0, 0, 0, 0)  # move B
+        matrix_a = tm._targets["A"].matrix.copy()
+
+        tm.harden_active()  # hardens B only
+
+        assert_allclose(tm.active_accumulator.matrix, np.eye(4))
+        assert_allclose(tm._targets["A"].matrix, matrix_a)
+
+    def test_harden_then_update_accumulates_from_identity(self):
+        tm = TargetManager(["A"])
+        tm.update(5.0, 0, 0, 0, 0, 0)
+        tm.harden_active()
+        tm.update(1.0, 0, 0, 0, 0, 0)
+        assert_allclose(tm.active_accumulator.matrix[0, 3], 1.0)
+
+
 class TestAddTarget:
 
     def test_add_new_target(self):

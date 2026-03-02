@@ -58,6 +58,10 @@ class TargetManager:
         if name not in self._targets:
             self._targets[name] = TransformAccumulator(self._reorth_interval)
 
+    def harden_active(self) -> None:
+        """Reset the active target's accumulator to identity."""
+        self._targets[self._active].reset()
+
     def update(
         self,
         dx: float,

@@ -429,7 +429,6 @@ class TestTargetSwitching:
 
     def test_targets_accumulate_independently(self):
         """Moving target A does not affect target B's accumulated state."""
-        from greifer.app import SENSITIVITY
         tm = TargetManager(["A", "B"])
         states = [
             FakeState(x=100.0, t=0.0),  # moves A

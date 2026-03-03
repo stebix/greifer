@@ -91,7 +91,7 @@ def _build_plot_grid(
     bold_font.setBold(True)
 
     for ch in CHANNELS:
-        p = win.addPlot(row=ch.row, col=ch.col, title=ch.name)
+        p = win.addPlot(row=ch.row, col=ch.col, title=ch.name)  # pyright: ignore[reportAttributeAccessIssue]
         p.setLabel("left", ch.name)
         p.setLabel("bottom", "Time", units="s")
         p.getAxis("bottom").enableAutoSIPrefix(False)
@@ -178,7 +178,7 @@ class _Visualizer:
         # Rolling x-axis window
         t_max = t_arr[-1]
         t_min = t_max - WINDOW_SECONDS
-        self._first_plot.setXRange(t_min, t_max, padding=0)
+        self._first_plot.setXRange(t_min, t_max, padding=0)  # pyright: ignore[reportAttributeAccessIssue]
 
         for label in self._lock_labels:
             if label.isVisible():
@@ -607,7 +607,7 @@ def run_visualization(
     )
 
     for axis, btn in lock_panel.buttons.items():
-        idx = axis.index
+        idx = axis.dof_index
         btn.toggled.connect(
             lambda checked, i=idx: viz.set_axis_locked(i, checked)
         )

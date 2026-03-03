@@ -79,7 +79,7 @@ class Axis(StrEnum):
     YAW = "yaw"
 
     @property
-    def index(self) -> int:
+    def dof_index(self) -> int:
         """Positional index in the (x, y, z, roll, pitch, yaw) tuple."""
         return _AXIS_ORDER.index(self)
 
@@ -126,7 +126,7 @@ class DofLockFilter:
         """Return the increment tuple with locked axes zeroed."""
         vals = [dx, dy, dz, rx, ry, rz]
         for axis in self._locked:
-            vals[axis.index] = 0.0
+            vals[axis.dof_index] = 0.0
         return (vals[0], vals[1], vals[2], vals[3], vals[4], vals[5])
 
 
